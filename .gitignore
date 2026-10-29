@@ -1,0 +1,66 @@
+# ─── Dependencies ────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+.yarn/
+.npm/
+
+# ─── Package artifacts (npm pack / publish) ──────────────────
+*.tgz
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+bun.lock
+bun.lockb
+
+# ─── Logs & runtime files ────────────────────────────────────
+*.log
+logs/
+*.pid
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── Local data (Mina keeps it in ~/.mina, never in the repo) ─
+.mina/
+
+# ─── Environment & secrets ───────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Editors & IDEs ──────────────────────────────────────────
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.claude/
+
+# ─── OS junk ─────────────────────────────────────────────────
+.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Windows PowerShell module cache that can appear in the project folder
+Microsoft/
+
+# ─── Media production (heavy source files for the README GIFs) ─
+# Only docs/demo.gif and docs/harbor3d.gif are shown in the README.
+docs/promo/
+docs/**/*.mp4
+docs/**/*.mov
+docs/**/*.py
+__pycache__/
+*.pyc
+
+# ─── Internal notes ──────────────────────────────────────────
+PLAN.md
+
+# ─── Tests ───────────────────────────────────────────────────
+test/.tmp/
+coverage/

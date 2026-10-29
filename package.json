@@ -1,0 +1,53 @@
+{
+  "name": "mina-dev",
+  "version": "0.1.0",
+  "description": "One local dashboard for every dev server on your machine: see what's running, start and stop projects, read their logs.",
+  "author": {
+    "name": "Youssef Hataba",
+    "url": "https://youssef-hataba.vercel.app/"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/youssef-hataba/Mina.git"
+  },
+  "homepage": "https://github.com/youssef-hataba/Mina#readme",
+  "bugs": {
+    "url": "https://github.com/youssef-hataba/Mina/issues"
+  },
+  "bin": {
+    "mina": "bin/cli.js"
+  },
+  "main": "server.js",
+  "scripts": {
+    "start": "node bin/cli.js",
+    "test": "node test/run.js",
+    "test:unit": "node test/run.js unit",
+    "test:integration": "node test/run.js integration"
+  },
+  "files": [
+    "bin/",
+    "public/",
+    "index.html",
+    "server.js",
+    "projects.js",
+    "ides.js",
+    "platform.js"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ],
+  "keywords": [
+    "localhost",
+    "dev-server",
+    "dashboard",
+    "ports",
+    "process-manager",
+    "developer-tools"
+  ]
+}
