@@ -84,11 +84,11 @@ describe('request bodies', () => {
   });
 
   test('adding many folders at once in one request works', async () => {
-    const dirs = Array.from({ length: 60 }, (_, i) => h.makeProject(path.join(root, 'many'), `p${String(i).padStart(2, '0')}-${'x'.repeat(100)}`));
+    const dirs = Array.from({ length: 120 }, (_, i) => h.makeProject(path.join(root, 'many'), `p${String(i).padStart(2, '0')}-${'x'.repeat(100)}`));
     assert.ok(JSON.stringify({ dirs }).length > 10000, 'bigger than the old 10 KB limit');
     assert.deepEqual(await mina.api('/api/projects/add', { dirs }), { ok: true });
     const saved = (await mina.apps()).projects.filter((p) => p.dir.includes(`${path.sep}many${path.sep}`));
-    assert.equal(saved.length, 60);
+    assert.equal(saved.length, 120);
     for (const p of saved) await mina.api('/api/projects/remove', { id: p.id });
   });
 });

@@ -156,7 +156,8 @@ async function launchPosix({ command, dir, out, err, pidFile, env }) {
 
 async function startTimes(pids) {
   const out = new Map();
-  pids = [...new Set(pids.map(Number).filter((p) => p > 0))];
+  // Live PIDs only: macOS ps rejects the whole list when one of them is out of range.
+  pids = [...new Set(pids.map(Number).filter((p) => p > 0 && isAlive(p)))];
   if (!pids.length) return out;
   if (WIN) {
     const ps = `foreach ($id in @(${pids.join(',')})) { try { $p = Get-Process -Id $id -ErrorAction Stop; "{0} {1}" -f $id, ([DateTimeOffset]$p.StartTime).ToUnixTimeMilliseconds() } catch {} }`;

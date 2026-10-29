@@ -28,6 +28,20 @@ const TOOLING_DIR = platform.WIN
 // Paths in a command line, a dependency path inside node_modules, and folders where no project lives.
 const ABS_PATH = platform.WIN ? /[A-Za-z]:\\[^"\s]+/g : /\/[^"'\s]+/g;
 const QUOTED_PATH = /"([A-Za-z]:\\[^"]+)"/g;
+// ps shows POSIX command lines without quotes, so "/home/John Smith/api/server.js" arrives split at the space.
+// From each word that starts a path, take the longest run of words that names something on disk.
+function spacedPaths(args) {
+  const words = args.split(' ');
+  const found = [];
+  for (let i = 0; i < Math.min(words.length, 64); i++) {
+    if (!words[i].startsWith('/')) continue;
+    for (let j = Math.min(words.length, i + 16); j > i + 1; j--) {
+      const candidate = words.slice(i, j).join(' ');
+      if (fs.existsSync(candidate)) { found.push(candidate); break; }
+    }
+  }
+  return found;
+}
 const within = (child, parent) => {
   const rel = path.relative(projects.norm(parent), projects.norm(child));
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
@@ -97,7 +111,7 @@ function findProject(cmd, cwd) {
   const args = argsOf(cmd);
   const nm = args.match(NM_PATH);
   // Quoted paths first, so a space in the path ("C:\Users\John Smith\api\server.js") doesn't cut it short.
-  const quoted = platform.WIN ? [...args.matchAll(QUOTED_PATH)].map((m) => m[1]) : [];
+  const quoted = platform.WIN ? [...args.matchAll(QUOTED_PATH)].map((m) => m[1]) : spacedPaths(args);
   const candidates = nm ? [nm[1]] : [...quoted, ...(args.match(ABS_PATH) || [])];
   // A hoisted monorepo runs "node /repo/node_modules/next/... dev" from /repo/apps/web: the working
   // directory inside that root is the real project, not the root that owns node_modules.

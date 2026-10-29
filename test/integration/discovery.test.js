@@ -180,7 +180,9 @@ describe('other runtimes', () => {
   const runtimes = [
     {
       name: 'Python (http.server)', available: () => h.has(h.WIN ? 'python' : 'python3'),
-      start: (port, dir) => spawn(h.WIN ? 'python' : 'python3', ['-m', 'http.server', String(port), '--bind', '127.0.0.1'], { cwd: dir, stdio: 'ignore', windowsHide: true }),
+      // socketserver.TCPServer, not http.server's HTTPServer: that one does a reverse DNS lookup before listening,
+      // which takes 30 s+ on macOS runners.
+      start: (port, dir) => spawn(h.WIN ? 'python' : 'python3', ['-c', 'import sys, socketserver, http.server as h; socketserver.TCPServer(("127.0.0.1", int(sys.argv[1])), h.SimpleHTTPRequestHandler).serve_forever()', String(port)], { cwd: dir, stdio: 'ignore', windowsHide: true }),
       process: /^python/i, hiddenByDefault: false,
     },
     {
