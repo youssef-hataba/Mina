@@ -51,8 +51,10 @@ jobs:
         if: runner.os == 'Linux'
         run: command -v lsof || (sudo apt-get update && sudo apt-get install -y lsof)
 
+      # spec output for the log, plus one annotation per failing test (file, line, message).
       - name: Unit tests
-        run: npm run test:unit
+        run: node test/run.js unit --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./test/github-reporter.js --test-reporter-destination=stdout
 
       - name: Integration tests
-        run: npm run test:integration
+        if: ${{ !cancelled() }}
+        run: node test/run.js integration --test-reporter=spec --test-reporter-destination=stdout --test-reporter=./test/github-reporter.js --test-reporter-destination=stdout
