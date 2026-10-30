@@ -20,7 +20,35 @@ const output = (cmd, args, opts = {}) => new Promise((resolve) =>
 // (an editor's preview server on 127.0.0.1:3000, the user's NestJS on [::]:3000), and keeping one per port
 // hid the real dev server behind the tooling. addrs says where each one listens, so it can be probed there.
 
-function listListenersWin() {
+// The full listing runs PowerShell and reads every process on the machine (about 1.5 s of CPU). Most refreshes
+// find the same servers as last time, so a quick netstat (about 0.1 s) decides first: when the set of listening
+// (address, port, process) is unchanged, the last full result is reused. It is redone anyway at least once a
+// minute, so details that netstat can't see stay fresh.
+const FULL_EVERY = 60000;
+let lastFull = null; // { key, at, list }
+
+async function listenKey() {
+  // Listening sockets are the ones with no remote end ("0.0.0.0:0" / "[::]:0"). The state column is not used:
+  // Windows translates "LISTENING" into the system language.
+  const rows = [];
+  for (const line of (await output('netstat', ['-ano'], { windowsHide: true })).split(/\r?\n/)) {
+    const m = line.match(/^\s*TCP\s+(\S+):(\d+)\s+(?:0\.0\.0\.0:0|\[::\]:0)\s+\S+\s+(\d+)\s*$/);
+    if (m) rows.push(`${m[1]} ${m[2]} ${m[3]}`);
+  }
+  return rows.length ? rows.sort().join('\n') : null; // null: netstat unavailable, always do the full listing
+}
+
+async function listListenersWin() {
+  const key = await listenKey();
+  if (key && lastFull && lastFull.key === key && Date.now() - lastFull.at < FULL_EVERY) {
+    return lastFull.list.map((l) => ({ ...l, addrs: [...l.addrs], chain: [...l.chain] }));
+  }
+  const list = await listListenersWinFull();
+  lastFull = key ? { key, at: Date.now(), list } : null;
+  return list.map((l) => ({ ...l, addrs: [...l.addrs], chain: [...l.chain] }));
+}
+
+function listListenersWinFull() {
   const ps = `
     [Console]::OutputEncoding = [Text.Encoding]::UTF8
     $c = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Group-Object LocalPort, OwningProcess

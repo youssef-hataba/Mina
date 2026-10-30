@@ -14,6 +14,7 @@ First public release.
 - Frontends open in an embedded preview. For backends, Mina lists the documentation and health endpoints that answer (`/docs`, `/swagger`, `/health`, `/graphql`…).
 - Editor tooling and system services are hidden unless *Show everything* is on. A dev server that shares its port number with an editor extension (one on IPv4, the other on IPv6) is still found, and probed on its own address.
 - Probes stay out of your server logs as much as possible: documentation paths are checked once per server process, and a page that answered is trusted for 30 seconds.
+- Light on the machine: on Windows, a refresh first asks netstat (about 0.05 s) whether any listening port changed, and only runs the full PowerShell listing when something did (or once a minute). Refreshes drop from about 2.5 s to about 0.05 s.
 
 ### Running projects
 - Add a project folder, or a parent folder with several projects inside.

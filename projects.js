@@ -131,7 +131,7 @@ async function start(p, { install = false, flight: claimed } = {}) {
       env: { ...require('./ides').cleanEnv(), BROWSER: 'none', FORCE_COLOR: '0' },
     });
     const rec = readPidFile(p.id);
-    if (rec && rec.pid === pid) owned.set(p.id, rec);
+    if (rec && rec.pid === pid) { owned.set(p.id, rec); confirmedAt.set(p.id, Date.now()); }
     // Stopped while it was launching: finish the job now that there is a PID to kill.
     if (flight.cancelled) {
       forget(p.id);
@@ -162,6 +162,7 @@ const owned = new Map();
 // forget: the user stopped it, so nothing about the run is kept.
 function drop(id) {
   owned.delete(id);
+  confirmedAt.delete(id);
   try { fs.unlinkSync(pidPath(id)); } catch {}
 }
 function forget(id) {
@@ -177,14 +178,27 @@ async function verifyOwned() {
   for (const [id, rec] of recs) {
     if ((!rec || !isAlive(rec.pid)) && !launching.has(id)) drop(id);
   }
-  const live = recs.filter(([id, rec]) => rec && isAlive(rec.pid) && !launching.has(id));
+  // A launcher confirmed in the last minute is still ours as long as it stays alive (a PID can only be reused
+  // after it dies), so the start-time lookup, a PowerShell run on Windows, isn't repeated on every refresh.
+  // stop() still checks again right before it kills anything.
+  const live = recs.filter(([id, rec]) => rec && isAlive(rec.pid) && !launching.has(id)
+    && !(owned.get(id)?.pid === rec.pid && owned.get(id)?.start === rec.start && Date.now() - (confirmedAt.get(id) || 0) < RECHECK_EVERY));
   if (!live.length) return;
   const times = await platform.startTimes(live.map(([, rec]) => rec.pid));
   for (const [id, rec] of live) {
-    if (platform.sameStart(times.get(rec.pid), rec.start)) owned.set(id, rec);
-    else if (isAlive(rec.pid)) drop(id); // recycled PID: not ours any more
+    // A stop (or a new launch) may have run while the start times were being read: then the pid file is gone or
+    // different, and this old answer must not bring the stopped launcher back as ours.
+    const current = readPidFile(id);
+    if (!current || current.pid !== rec.pid || current.start !== rec.start || launching.has(id)) continue;
+    const seen = times.get(rec.pid);
+    if (platform.sameStart(seen, rec.start)) { owned.set(id, rec); confirmedAt.set(id, Date.now()); }
+    // Only a start time that differs proves the PID was recycled. No answer (the lookup failed, or was slow
+    // under load) proves nothing: leave things as they were and ask again next time.
+    else if (seen && isAlive(rec.pid)) drop(id);
   }
 }
+const RECHECK_EVERY = 60000;
+const confirmedAt = new Map(); // id -> when its launcher's start time last matched
 
 // Many requests arrive together (a refresh, a group action); one verification serves them all for a moment.
 let verifying = null;

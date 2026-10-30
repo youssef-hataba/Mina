@@ -23,22 +23,26 @@ function tmpDir(prefix = 'd') {
   return dir;
 }
 
-// Test files run in parallel, and port 0 hands out ports in sequence, so two files could pick the same port
-// between "free" and "bound". Each test process walks its own block of ports instead.
-const PORT_BASE = 20000 + (process.pid % 300) * 100;
-let portCursor = 0;
-const tryPort = (port) => new Promise((resolve) => {
+// Test files run in parallel, and a port that is free now can be taken by another file before it's bound.
+// Each port handed out is reserved with a lock file created atomically ('wx'), so no two test processes can ever
+// get the same one. (A per-process block by PID wasn't enough: Windows PIDs are multiples of 4, so blocks collided.)
+const PORT_LOCKS = path.join(TMP, 'ports');
+let portCursor = 20000 + Math.floor(Math.random() * 20000);
+// Free on this address? Only "in use" says no: a machine without IPv6 can't bind ::1 at all, which is fine.
+const tryPort = (port, host) => new Promise((resolve) => {
   const s = net.createServer();
   s.unref();
-  s.on('error', () => resolve(false));
-  s.listen(port, '127.0.0.1', () => s.close(() => resolve(true)));
+  s.on('error', (e) => resolve(e.code !== 'EADDRINUSE' && e.code !== 'EACCES'));
+  s.listen(port, host, () => s.close(() => resolve(true)));
 });
 async function freePort() {
-  for (let i = 0; i < 100; i++) {
-    const port = PORT_BASE + (portCursor++ % 100);
-    if (await tryPort(port) && !(await portOpen(port, '::1'))) return port;
+  fs.mkdirSync(PORT_LOCKS, { recursive: true });
+  for (let i = 0; i < 500; i++) {
+    const port = 20000 + ((portCursor++ - 20000) % 25000);
+    try { fs.closeSync(fs.openSync(path.join(PORT_LOCKS, String(port)), 'wx')); } catch { continue; } // someone else's
+    if (await tryPort(port, '127.0.0.1') && await tryPort(port, '::1')) return port;
   }
-  throw new Error('no free port in this test process\'s block');
+  throw new Error('no free port found');
 }
 
 // Is anything accepting connections on this port (IPv4 or IPv6 loopback)?

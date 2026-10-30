@@ -52,6 +52,36 @@ describe('listListeners()', () => {
     } finally { s.close(); }
   });
 
+  test('the quick path never hides a change: a new listener shows at once, a closed one is gone at once', async () => {
+    await platform.listListeners(); // warm: the next call may reuse this result
+    const port = await h.freePort();
+    const s = await listenOn(port);
+    try {
+      const t0 = Date.now();
+      assert.ok((await platform.listListeners()).some((l) => l.port === port && l.pid === process.pid), 'new listener missing');
+      assert.ok(Date.now() - t0 < 15000);
+    } finally { await new Promise((r) => s.close(r)); }
+    assert.ok(!(await platform.listListeners()).some((l) => l.port === port), 'closed listener still listed');
+  });
+
+  test('an unchanged machine is listed quickly the second time (Windows reuses the full listing)', async (t) => {
+    if (!h.WIN) return t.skip('the quick path is Windows-only');
+    await platform.listListeners();
+    const t0 = Date.now();
+    await platform.listListeners();
+    assert.ok(Date.now() - t0 < 1500, `took ${Date.now() - t0} ms`);
+  });
+
+  test('a reused result is a copy: changing it does not change the next answer', async () => {
+    const a = await platform.listListeners();
+    if (!a.length) return;
+    a[0].addrs.push('mutated');
+    a[0].chain.push(-1);
+    const b = await platform.listListeners();
+    const same = b.find((l) => l.port === a[0].port && l.pid === a[0].pid);
+    assert.ok(same && !same.addrs.includes('mutated') && !same.chain.includes(-1));
+  });
+
   test('every entry has a numeric port and pid', async () => {
     for (const l of await platform.listListeners()) {
       assert.equal(typeof l.port, 'number');

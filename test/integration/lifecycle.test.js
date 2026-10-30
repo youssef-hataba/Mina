@@ -259,8 +259,9 @@ describe('groups', () => {
     ws = path.join(root, 'stack');
     apiPort = await h.freePort();
     webPort = await h.freePort();
-    // The backend takes 3 s to listen; the frontend must still come up after it.
-    h.makeProject(ws, 'backend', { deps: ['@nestjs/core'], server: { port: apiPort, type: 'json', delay: 3000, marker: path.join(ws, 'backend.up') } });
+    // The backend takes 12 s to listen; the frontend must still come up after it. Long enough that the frontend is
+    // reliably still queued when checked, even when a refresh is slow because the machine is busy.
+    h.makeProject(ws, 'backend', { deps: ['@nestjs/core'], server: { port: apiPort, type: 'json', delay: 12000, marker: path.join(ws, 'backend.up') } });
     h.makeProject(ws, 'frontend', { deps: ['next'], server: { port: webPort, marker: path.join(ws, 'frontend.up') } });
     await mina.api('/api/projects/add', { dirs: [path.join(ws, 'backend'), path.join(ws, 'frontend')] });
   });

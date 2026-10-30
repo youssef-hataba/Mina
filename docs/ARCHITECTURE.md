@@ -92,7 +92,7 @@ Everything that differs between operating systems lives here, behind one interfa
 
 | Function | Windows | macOS / Linux |
 |---|---|---|
-| `listListeners` | PowerShell `Get-NetTCPConnection` + process info | `lsof -iTCP -sTCP:LISTEN` + `ps`, cwd via `lsof`/`/proc` |
+| `listListeners` | `netstat -ano` first; the full PowerShell `Get-NetTCPConnection` + process listing only when the listening set changed, or once a minute | `lsof -iTCP -sTCP:LISTEN` + `ps`, cwd via `lsof`/`/proc` |
 | `launch` | `Start-Process cmd.exe` hidden; `cmd` redirects the output to env-var paths; the working folder is wildcard-escaped (so `[ ]` is safe); PID + start time written to a file | `/bin/sh -c` with `detached: true` (new process group); PID + start time written to a file |
 | `startTimes` | `Get-Process` StartTime | `/proc/<pid>/stat` (Linux), `ps -o lstart` (macOS) |
 | `killTree` | `taskkill /PID <pid> /T /F` | `SIGTERM` to `-pid`, then `SIGKILL` after about 3 s |
