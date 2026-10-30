@@ -132,7 +132,7 @@ Mina detects installed editors and opens any project or group in one click: VS C
 | Command | Description |
 |---|---|
 | `mina` | Start and open the dashboard. If Mina is already running, it just opens it. |
-| `mina --port 4321` | Use another port. `MINA_PORT=4321` works too. |
+| `mina --port 4321` | Move Mina to another port. The port is remembered for later runs and for the startup entry, and the Mina still running on the old port is stopped. `MINA_PORT=4321` picks a port for one run only. |
 | `mina --no-open` | Start without opening the browser. |
 | `mina install-startup` | Start Mina in the background every time you log in. |
 | `mina uninstall-startup` | Remove the startup entry again. |

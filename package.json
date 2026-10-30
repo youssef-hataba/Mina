@@ -1,6 +1,6 @@
 {
   "name": "mina-dev",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "One local dashboard for every dev server on your machine: see what's running, start and stop projects, read their logs.",
   "author": {
     "name": "Youssef Hataba",

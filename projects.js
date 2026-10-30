@@ -426,5 +426,5 @@ async function pickFolder() {
 
 module.exports = {
   scan, detect, addProjects, removeProject, getProject, needsInstall, start, stop, withStatus, spawnedPids, pickFolder, readLogs,
-  setGroup, groupMembers, groupRoots, ownerOf, queued, ownPid, norm, refreshOwnership, isStarting, claim, release,
+  setGroup, groupMembers, groupRoots, ownerOf, queued, ownPid, norm, refreshOwnership, isStarting, claim, release, HOME,
 };

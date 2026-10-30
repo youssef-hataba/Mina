@@ -574,6 +574,8 @@ async function handle(req, res) {
     // Stop other sites from framing the dashboard and clicking its buttons.
     'X-Frame-Options': 'DENY',
     'Content-Security-Policy': "frame-ancestors 'none'",
+    // Lets the mina command recognise this exact process when it moves the dashboard to another port.
+    'X-Mina-Pid': String(process.pid),
   });
   res.end(html);
 }
@@ -583,6 +585,13 @@ server.on('error', (e) => {
   console.error(`Port ${PORT} is already in use. Try: mina --port <another port>`);
   process.exit(1);
 });
-server.listen(PORT, '127.0.0.1', () => console.log(`Mina running on http://localhost:${PORT}`));
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`Mina running on http://localhost:${PORT}`);
+  // Which Mina is running from this ~/.mina, so starting one on another port can stop this one.
+  try {
+    fs.mkdirSync(projects.HOME, { recursive: true });
+    fs.writeFileSync(path.join(projects.HOME, 'running.json'), JSON.stringify({ pid: process.pid, port: PORT }));
+  } catch {}
+});
 
 module.exports = { server, PORT };

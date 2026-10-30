@@ -94,6 +94,36 @@ describe('running', () => {
     } finally { first.proc.kill(); }
   });
 
+  test('a new --port moves the dashboard: the old one stops and the port is remembered', async () => {
+    const own = h.tmpDir('cli-move');
+    const [a, b] = [await h.freePort(), await h.freePort()];
+    const start = (port) => {
+      const proc = spawn(process.execPath, [h.CLI, '--port', String(port), '--no-open'], { env: h.isolatedEnv(own), stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      const m = { proc, out: '' };
+      proc.stdout.on('data', (d) => { m.out += d; });
+      proc.stderr.on('data', (d) => { m.out += d; });
+      return m;
+    };
+    // Another home's Mina is somebody else's dashboard (a second user, a test run): never touched.
+    const stranger = run(['--port', String(await h.freePort()), '--no-open']);
+    const first = start(a);
+    let second;
+    try {
+      await h.waitFor(() => first.out.includes('Mina running') && stranger.out.includes('Mina running'), { timeout: 15000, what: 'first Minas' });
+      second = start(b);
+      await h.waitFor(() => second.out.includes(`Stopped the Mina on port ${a}`), { timeout: 15000, what: second.out || 'move' });
+      await h.waitFor(() => first.proc.exitCode !== null || first.proc.signalCode !== null, { timeout: 10000, what: 'old Mina to exit' });
+      assert.equal(stranger.proc.exitCode, null, 'a Mina from another ~/.mina keeps running');
+      assert.equal(fs.readFileSync(path.join(own, '.mina', 'port'), 'utf8'), String(b));
+      // A plain "mina" now finds it on the remembered port.
+      const again = spawnSync(process.execPath, [h.CLI, '--no-open'], { env: h.isolatedEnv(own), encoding: 'utf8', timeout: 20000, windowsHide: true });
+      assert.match(again.stdout, new RegExp(`already running on http://localhost:${b}`));
+    } finally {
+      for (const m of [first, second, stranger]) if (m) m.proc.kill();
+      h.rmQuiet(own);
+    }
+  });
+
   test('a port held by something else gives a clear error', async () => {
     const port = await h.freePort();
     // A separate process: spawnSync blocks this one, so a server in here could never answer.
@@ -143,7 +173,8 @@ describe('startup entry', () => {
     const text = h.WIN ? raw.toString('utf16le').replace(/^﻿/, '') : raw.toString('utf8');
     if (h.WIN) assert.deepEqual([...raw.subarray(0, 2)], [0xff, 0xfe], 'UTF-16 LE BOM so WSH reads non-ASCII paths');
     assert.ok(text.includes('--no-open'));
-    assert.ok(text.includes('4811'), 'the chosen port is kept');
+    assert.ok(!text.includes('4811'), 'no port in the entry: it follows the remembered one');
+    assert.equal(fs.readFileSync(path.join(home, '.mina', 'port'), 'utf8'), '4811', 'the chosen port is remembered');
     assert.ok(text.includes(h.WIN ? process.execPath : process.execPath.replace(/\\/g, '\\\\')));
 
     const u = cli(['uninstall-startup'], env);
@@ -153,13 +184,11 @@ describe('startup entry', () => {
     assert.match(cli(['uninstall-startup'], env).out, /not set to start/);
   });
 
-  test('MINA_PORT is written into the startup entry too', (t) => {
+  test('install-startup remembers a MINA_PORT too', (t) => {
     if (process.platform === 'darwin') return t.skip('macOS uses launchctl');
-    const { env, base } = startupEnv();
+    const { env } = startupEnv();
     cli(['install-startup'], { ...env, MINA_PORT: '4822' });
-    const raw = fs.readFileSync(entryPath(base));
-    const text = h.WIN ? raw.toString('utf16le') : raw.toString('utf8');
-    assert.ok(text.includes('4822'));
+    assert.equal(fs.readFileSync(path.join(home, '.mina', 'port'), 'utf8'), '4822');
     cli(['uninstall-startup'], env);
   });
 

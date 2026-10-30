@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-30
+
+### Fixed
+- `mina --port <n>` is remembered: a plain `mina` and the startup entry come back on that port after a restart, instead of the default 4747.
+- Moving to another port stops the Mina that was running on the old one, so two dashboards are never left running.
+
 ## [0.1.0] - 2026-10-30
 
 First public release.
@@ -46,5 +52,6 @@ First public release.
 - Automated test suite (`npm test`, built on `node:test`, no dependencies) that starts and stops real servers.
 - CI on Windows, macOS and Linux with Node 18, 20, 22 and 24, against Python, PHP, Ruby, Go, Rust, .NET, Deno and Bun, and with npm, pnpm, yarn and bun.
 
-[Unreleased]: https://github.com/youssef-hataba/Mina/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/youssef-hataba/Mina/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/youssef-hataba/Mina/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/youssef-hataba/Mina/releases/tag/v0.1.0

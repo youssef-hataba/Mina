@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // mina                      start the dashboard (or reuse a running one) and open it in the browser
-// mina --port 4321          same, on another port
+// mina --port 4321          same, on another port; remembered for later runs and the startup entry
 // mina --no-open            start without opening the browser (used by the startup entry)
 // mina install-startup      start Mina hidden every time you log in
 // mina uninstall-startup    undo install-startup
@@ -22,11 +22,23 @@ if (portAt > -1 && portRaw === undefined) fail('--port needs a value, for exampl
 if (portRaw !== undefined && portRaw !== '' && !(/^\d+$/.test(portRaw) && +portRaw >= 1 && +portRaw <= 65535)) {
   fail(`Invalid port: ${portRaw}. Use a number from 1 to 65535.`);
 }
-const PORT = Number(portRaw) || 4747;
+const MINA_HOME = path.join(os.homedir(), '.mina');
+// The port last picked with --port, so a plain "mina" (and the startup entry) comes back on it.
+const PORT_FILE = path.join(MINA_HOME, 'port');
+// Written by the running server: { pid, port }.
+const RUNNING_FILE = path.join(MINA_HOME, 'running.json');
+function savedPort() {
+  try {
+    const p = fs.readFileSync(PORT_FILE, 'utf8').trim();
+    return /^\d+$/.test(p) && +p >= 1 && +p <= 65535 ? +p : null;
+  } catch { return null; }
+}
+const portFlag = Boolean(portEq) || portAt > -1;
+const PORT = Number(portRaw) || savedPort() || 4747;
 const CLI = path.resolve(__filename);
 // What the startup entry runs: this exact node and this exact script, so it works without a PATH lookup.
-// The port is written in whenever it isn't the default, whether it came from --port or MINA_PORT.
-const START_ARGS = [process.execPath, CLI, '--no-open', ...(PORT !== 4747 ? ['--port', String(PORT)] : [])];
+// No port in it: it starts on the remembered one, so a later "mina --port" moves the next login's Mina too.
+const START_ARGS = [process.execPath, CLI, '--no-open'];
 
 function fail(message) {
   console.error(message);
@@ -37,7 +49,7 @@ const HELP = `Mina: one dashboard for every local dev server.
 
 Usage:
   mina                     start and open http://localhost:${PORT}
-  mina --port <n>          use another port (or set MINA_PORT)
+  mina --port <n>          use another port from now on (MINA_PORT: this run only)
   mina --no-open           start without opening the browser
   mina install-startup     start Mina in the background when you log in
   mina uninstall-startup   remove that startup entry
@@ -87,7 +99,16 @@ X-GNOME-Autostart-enabled=true
 `;
 }
 
+function rememberPort() {
+  try {
+    fs.mkdirSync(MINA_HOME, { recursive: true });
+    fs.writeFileSync(PORT_FILE, String(PORT));
+  } catch {}
+}
+
 function installStartup() {
+  // The entry starts on the remembered port, so the one in effect now (from --port or MINA_PORT) is kept.
+  rememberPort();
   fs.mkdirSync(path.dirname(STARTUP), { recursive: true });
   if (MAC) fs.mkdirSync(path.join(os.homedir(), '.mina'), { recursive: true });
   // Windows Script Host reads a .vbs in the ANSI code page unless it is UTF-16 with a BOM, which keeps
@@ -110,34 +131,54 @@ function uninstallStartup() {
 // ---- Run ----
 
 // A Mina already on this port answers its page with the Mina title; anything else there is a real conflict.
-function minaRunning() {
+// Resolves to that Mina's pid (0 from an older Mina that doesn't send one), or null when no Mina answers.
+function minaRunning(port = PORT) {
   return new Promise((resolve) => {
-    const req = http.get({ host: '127.0.0.1', port: PORT, path: '/', timeout: 1500, headers: { Host: `localhost:${PORT}` } }, (res) => {
+    const req = http.get({ host: '127.0.0.1', port, path: '/', timeout: 1500, headers: { Host: `localhost:${port}` } }, (res) => {
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (d) => { body += d; });
-      res.on('end', () => resolve(/<title>Mina\b/.test(body)));
-      res.on('close', () => resolve(false)); // cut off mid-answer (a no-op after 'end')
+      res.on('end', () => resolve(/<title>Mina\b/.test(body) ? Number(res.headers['x-mina-pid']) || 0 : null));
+      res.on('close', () => resolve(null)); // cut off mid-answer (a no-op after 'end')
     });
     // Hard deadline: whatever holds the port might send headers and then never finish. Not unref'd: once the
     // socket is destroyed this timer is all that keeps the process alive long enough to report the conflict.
-    const timer = setTimeout(() => { req.destroy(); resolve(false); }, 3000);
-    req.on('timeout', () => { clearTimeout(timer); req.destroy(); resolve(false); });
-    req.on('error', () => { clearTimeout(timer); resolve(false); });
+    const timer = setTimeout(() => { req.destroy(); resolve(null); }, 3000);
+    req.on('timeout', () => { clearTimeout(timer); req.destroy(); resolve(null); });
+    req.on('error', () => { clearTimeout(timer); resolve(null); });
     req.on('close', () => clearTimeout(timer));
   });
 }
 
+// One dashboard per ~/.mina: once this one is up, the one this home last ran on another port is stopped.
+// Only when it still answers there with the pid it recorded, so a reused pid is never killed.
+async function stopPrevious(prev) {
+  if (!prev || prev.port === PORT || !(prev.pid > 0) || prev.pid === process.pid) return;
+  if (await minaRunning(prev.port) !== prev.pid) return;
+  try {
+    process.kill(prev.pid);
+    console.log(`Stopped the Mina on port ${prev.port}; it now runs on ${PORT}.`);
+  } catch {}
+}
+
 async function run() {
   const url = `http://localhost:${PORT}`;
-  if (await minaRunning()) {
+  if (await minaRunning() !== null) {
     console.log(`Mina is already running on ${url}`);
+    if (portFlag) rememberPort();
     if (!flag('--no-open')) openUrl(url);
     return;
   }
+  // Read before the new server records itself there.
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(RUNNING_FILE, 'utf8')); } catch {}
   process.env.MINA_PORT = String(PORT);
   const { server } = require('../server');
-  if (!flag('--no-open')) server.once('listening', () => openUrl(url));
+  server.once('listening', () => {
+    if (portFlag) rememberPort();
+    stopPrevious(prev);
+    if (!flag('--no-open')) openUrl(url);
+  });
 }
 
 if (flag('--help') || flag('-h')) console.log(HELP);
