@@ -26,6 +26,8 @@ First public release.
 - Groups, automatic by parent folder or named by you. *Start group* starts backends first and frontends once the backends are listening.
 - Warns when a project's usual port is taken by something else.
 - Servers Mina started are still recognised after Mina restarts.
+- Every open tab stays current: a change made in one tab shows in the others at once, coming back to a tab refreshes it, and a visible tab checks every 20 s for servers started or stopped outside Mina. If Mina restarts, open tabs reload themselves.
+- The live preview has a reload button.
 - Opens a project or a group in VS Code, Cursor, Windsurf, Zed, Sublime Text, JetBrains IDEs and others.
 
 ### Command line

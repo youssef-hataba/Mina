@@ -176,13 +176,20 @@ function classify(app, project) {
   return { kind: html ? 'frontend' : 'backend', framework: exeName(app.name) };
 }
 
-// Requests that arrive while a scan is running share it: the page polls every 2.5 s while something starts,
-// and overlapping scans (each one a PowerShell or lsof run plus HTTP probes) only slowed each other down.
-const scans = new Map();
+// Overlapping scans (each one a PowerShell or lsof run plus HTTP probes) only slowed each other down, so they are
+// shared, but never with a stale result: a scan that was already running when a request arrived began before
+// whatever that request wants to see (the server that just came up). Such requests wait for it, then share
+// one fresh follow-up scan.
+const scans = new Map(); // 'all' | 'dev' -> { running, next }
 function getApps(all) {
   const key = all ? 'all' : 'dev';
-  if (!scans.has(key)) scans.set(key, scanApps(all).finally(() => scans.delete(key)));
-  return scans.get(key);
+  const s = scans.get(key) || scans.set(key, { running: null, next: null }).get(key);
+  if (!s.running) {
+    s.running = scanApps(all).finally(() => { s.running = null; });
+    return s.running;
+  }
+  s.next ||= s.running.catch(() => {}).then(() => { s.next = null; return getApps(all); });
+  return s.next;
 }
 
 // Probes land in the user's server logs ("GET /docs 404"), so they are kept to a minimum: a page that answered
@@ -324,14 +331,46 @@ async function runGroup(list, install) {
       try { await projects.start(p, { install: install && projects.needsInstall(p) }); } catch {}
       projects.queued.delete(p.id);
     }));
+    notify(); // queued -> starting
     const end = Date.now() + 90000;
     while (Date.now() < end) {
       await sleep(2000);
       const dirs = await listeningDirs();
       if (!go.some((p) => !dirs.has(projects.norm(p.dir)) && projects.ownPid(p.id))) break;
     }
+    notify(); // this wave is up (or gave up): the next one starts
   }
 }
+
+// ---- Live updates: every open dashboard tab hears about changes as they happen ----
+
+// Each tab holds GET /api/events open; a line is written whenever something any tab did changed the state
+// (start, stop, add, remove, groups), so the other tabs refresh at once instead of on their next manual reload.
+const subscribers = new Set();
+let changeVersion = 0;
+let notifyTimer = null;
+// Several changes in a burst (a group stop touches every member) become one message.
+function notify() {
+  clearTimeout(notifyTimer);
+  notifyTimer = setTimeout(() => {
+    changeVersion++;
+    const line = JSON.stringify({ type: 'change', version: changeVersion }) + '\n';
+    for (const res of subscribers) res.write(line);
+  }, 100);
+}
+
+function subscribe(res) {
+  res.writeHead(200, { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' });
+  res.write(JSON.stringify({ type: 'hello', version: changeVersion }) + '\n');
+  subscribers.add(res);
+  // A ping now and then keeps idle connections open and lets a dead one be noticed and dropped.
+  const ping = setInterval(() => res.write(JSON.stringify({ type: 'ping' }) + '\n'), 25000);
+  res.on('close', () => { clearInterval(ping); subscribers.delete(res); });
+}
+
+// POST routes that change what the dashboard shows; a successful one tells every tab.
+const MUTATIONS = new Set(['/api/kill', '/api/projects/add', '/api/projects/remove', '/api/projects/set-group', '/api/projects/start',
+  '/api/projects/stop', '/api/groups/start', '/api/groups/stop', '/api/groups/rename', '/api/groups/remove']);
 
 function send(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -392,7 +431,9 @@ async function handle(req, res) {
     if (req.method === 'GET' && req.url === '/api/ides') {
       return send(res, 200, ides.detect().map(({ id, name }) => ({ id, name })));
     }
+    if (req.method === 'GET' && req.url === '/api/events') return subscribe(res);
     if (req.method !== 'POST') return send(res, 404, { error: 'not found' });
+    if (MUTATIONS.has(req.url)) res.on('finish', () => { if (res.statusCode === 200) notify(); });
     if (!/^application\/json/i.test(req.headers['content-type'] || '')) return send(res, 415, { error: 'json only' });
     const body = await readJson(req);
     if (body === TOO_BIG) return send(res, 413, { error: 'body too large' });

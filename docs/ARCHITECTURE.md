@@ -8,7 +8,7 @@ This document explains how Mina is put together: what each module does, how a re
 - **Discovery over configuration.** Mina should be useful the first time it opens, before you have added anything.
 - **The OS is the source of truth.** A project counts as "running" because something is actually listening in its folder, not because Mina remembers starting it.
 - **Secure by default.** Anything that can start or kill processes has to be impossible for a web page to trigger.
-- **Polling only while someone is watching.** Mina does no background work while the dashboard is idle.
+- **Polling only while someone is watching.** Mina does no background work on its own. An open, visible dashboard tab checks every 20 s; hidden tabs don't scan; changes made from any tab reach the others as events.
 
 ## Repository layout
 
@@ -120,6 +120,7 @@ Every `/api/*` request must carry the `X-Token` header. Every `POST` must use `C
 |---|---|---|---|
 | GET | `/api/apps[?all=1]` | — | Scan listeners; returns running apps and saved projects with status |
 | GET | `/api/ides` | — | Installed editors |
+| GET | `/api/events` | — | Held-open NDJSON stream: `hello`, then `change` whenever a tab starts, stops, adds, removes or regroups something (and as a group run moves to its next wave), plus a `ping` every 25 s |
 | POST | `/api/kill` | `{ pid }` | Kill a PID from the latest scan, or one Mina spawned |
 | POST | `/api/pick-folder` | — | Open the native folder picker |
 | POST | `/api/open` | `{ ide, dir }` | Open a **known** folder in an editor |

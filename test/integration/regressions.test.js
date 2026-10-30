@@ -264,3 +264,90 @@ describe('probes stay out of the user\'s logs', () => {
     assert.ok((seen['/'] || 0) <= 1, `GET / ${seen['/']} times in 3 refreshes`);
   });
 });
+
+// ---- Live updates between tabs ----
+
+// Opens GET /api/events like a dashboard tab and collects the messages.
+function listen(m, token = m.token) {
+  const messages = [];
+  let resolveStatus;
+  const status = new Promise((r) => { resolveStatus = r; });
+  const req = require('http').get({ host: '127.0.0.1', port: m.port, path: '/api/events', headers: { Host: m.host, 'X-Token': token } }, (res) => {
+    resolveStatus(res.statusCode);
+    let buf = '';
+    res.setEncoding('utf8');
+    res.on('data', (d) => {
+      buf += d;
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        try { messages.push(JSON.parse(buf.slice(0, nl))); } catch { messages.push({ raw: buf.slice(0, nl) }); }
+        buf = buf.slice(nl + 1);
+      }
+    });
+  });
+  req.on('error', () => {});
+  return { messages, status, close: () => req.destroy() };
+}
+
+describe('live updates between tabs', () => {
+  test('a tab is told at once when another tab adds, starts and stops a project', { timeout: 90000 }, async () => {
+    const tab = listen(mina);
+    assert.equal(await tab.status, 200);
+    await h.waitFor(() => tab.messages.some((x) => x.type === 'hello'), { what: 'hello' });
+    const changes = () => tab.messages.filter((x) => x.type === 'change').length;
+
+    const port = await h.freePort();
+    const dir = h.makeProject(root, 'live-update', { server: { port } });
+    let before = changes();
+    await mina.api('/api/projects/add', { dirs: [dir] });
+    await h.waitFor(() => changes() > before, { timeout: 3000, what: 'change after add' });
+
+    const p = await project('live-update');
+    before = changes();
+    await mina.api('/api/projects/start', { id: p.id });
+    await h.waitFor(() => changes() > before, { timeout: 3000, what: 'change after start' });
+    await h.waitFor(() => h.portOpen(port), { timeout: 30000, what: 'server' });
+
+    before = changes();
+    await mina.api('/api/projects/stop', { id: p.id });
+    await h.waitFor(() => changes() > before, { timeout: 3000, what: 'change after stop' });
+    tab.close();
+  });
+
+  test('reading a page does not count as a change; a refused action does not either', async () => {
+    const tab = listen(mina);
+    await h.waitFor(() => tab.messages.some((x) => x.type === 'hello'), { what: 'hello' });
+    await mina.apps();
+    await mina.api('/api/projects/start', { id: 'nope' });
+    await h.sleep(600);
+    assert.equal(tab.messages.filter((x) => x.type === 'change').length, 0);
+    tab.close();
+  });
+
+  test('the event stream needs the token like every other API route', async () => {
+    const stranger = listen(mina, 'wrong');
+    assert.equal(await stranger.status, 403);
+    stranger.close();
+  });
+});
+
+describe('a refresh never returns a result from before it was asked', () => {
+  test('a server that comes up while a scan is running is in the next answer', { timeout: 90000 }, async () => {
+    // A dev server that accepts connections but never answers makes every scan wait out its probe.
+    const silentPort = await h.freePort();
+    const silent = h.makeProject(root, 'slow-to-probe', { deps: ['next'] });
+    fs.writeFileSync(path.join(silent, 'server.js'), `require('net').createServer(() => {}).listen(${silentPort}, '127.0.0.1');`);
+    children.push(h.runExternal(silent));
+    await h.waitFor(() => h.portOpen(silentPort), { what: 'silent server' });
+
+    const port = await h.freePort();
+    const dir = h.makeProject(root, 'late-comer', { server: { port } });
+    const slowScan = mina.apps(); // started before the new server exists
+    await h.sleep(300);
+    children.push(h.runExternal(dir));
+    await h.waitFor(() => h.portOpen(port), { what: 'late server' });
+    const fresh = await mina.apps(); // asked after it came up, while the slow scan may still be running
+    await slowScan;
+    assert.ok(fresh.apps.some((a) => a.port === port), 'the answer includes the server that came up before the request');
+  });
+});

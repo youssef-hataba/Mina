@@ -114,7 +114,10 @@ Servers you started yourself from a normal terminal are detected too. Editor too
 - **Stop** kills the whole process tree (`cmd`/`sh` → `npm` → `node`, or `php artisan serve` → `php -S`), so no orphaned servers are left holding your ports.
 
 ### Logs
-Live `stdout` and `stderr` for every project Mina started, with errors highlighted. Logs are saved to disk, so they're still there after a refresh.
+Live `stdout` and `stderr` for every project Mina started, with errors and warnings highlighted. Logs are saved to disk, so they're still there after a refresh.
+
+### Always up to date
+No refresh button needed. A project started or stopped in one tab shows in every other open tab at once. Coming back to the tab refreshes it, and a visible tab checks every 20 seconds for servers started or stopped outside Mina (from a terminal, or one that crashed). Hidden tabs don't scan at all.
 
 ### Groups
 - Projects that share a parent folder are **grouped automatically**, or you can name groups yourself.

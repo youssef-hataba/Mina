@@ -88,10 +88,14 @@ function buildItems() {
 // force=false (background re-checks) keeps the view as is when the active item didn't change,
 // so the preview and a live log aren't torn down every few seconds.
 // A load requested while one is in flight runs right after it, so a change made meanwhile is never missed.
-let reloadAfter = false;
+// A load requested while one is in flight runs right after it; a forced one stays forced.
+let reloadAfter = null;
+let bootTimer = null;
+let lastLoad = 0;
 async function load(force = true) {
-  if (busy) { reloadAfter = true; return; }
+  if (busy) { reloadAfter = reloadAfter === true || force; return; }
   busy = true;
+  lastLoad = Date.now();
   const btn = document.getElementById('refresh');
   btn.classList.add('spin');
   try {
@@ -109,14 +113,75 @@ async function load(force = true) {
     busy = false;
     btn.classList.remove('spin');
   }
-  if (reloadAfter) { reloadAfter = false; return load(true); }
+  if (reloadAfter !== null) { const again = reloadAfter; reloadAfter = null; return load(again); }
   // Re-check only while something is booting, and only for a bounded time. That includes a boot already under
   // way when the page was opened (a reload, a second tab, Mina restarted): it gets its own window to finish.
+  // One timer at a time, however many loads ran (events, focus and background checks all call load).
   const booting = projects.some((p) => p.state === 'starting' || p.state === 'queued');
   if (booting && !watchUntil) watchUntil = Date.now() + 180000;
   if (!booting) watchUntil = 0;
-  if (booting && Date.now() < watchUntil) setTimeout(() => load(false), 2500);
+  clearTimeout(bootTimer);
+  if (booting && Date.now() < watchUntil) bootTimer = setTimeout(() => load(false), 2500);
 }
+
+// ---- Staying current without a manual refresh ----
+
+// 1. Changes made from any tab (start, stop, add, groups) arrive as events and refresh this one at once.
+// 2. Coming back to the tab refreshes it, since it may have missed things while hidden.
+// 3. A quiet check every 20 s while the tab is visible catches what happens outside Mina (a server started from a
+//    terminal, or one that crashed). Hidden tabs don't scan at all; tabs that scan together share one scan.
+const BACKGROUND_EVERY = 20000;
+let eventsBackoff = 1000;
+
+function refreshSoon() {
+  if (document.hidden) { pendingRefresh = true; return; }
+  clearTimeout(refreshSoon.timer);
+  refreshSoon.timer = setTimeout(() => load(false), 150);
+}
+let pendingRefresh = false;
+
+async function watchServer() {
+  try {
+    const res = await fetch('/api/events', { headers: { 'X-Token': TOKEN } });
+    // Mina restarted (new token): the page reloads itself to pick up the new one, instead of asking for F5.
+    if (res.status === 403) {
+      const why = await res.json().catch(() => ({}));
+      if (why.error === 'bad token') return location.reload();
+      throw new Error(why.error || 'refused');
+    }
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    eventsBackoff = 1000;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    let first = true;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const msg = JSON.parse(buf.slice(0, nl) || '{}');
+        buf = buf.slice(nl + 1);
+        // After a reconnect the server may have changed meanwhile; "hello" on a later connection means "look again".
+        if (msg.type === 'change' || (msg.type === 'hello' && !first)) refreshSoon();
+        if (msg.type === 'hello') first = false;
+      }
+    }
+  } catch {}
+  // Dropped (Mina restarted, laptop slept): try again, more slowly each time, up to every 15 s.
+  setTimeout(watchServer, eventsBackoff);
+  eventsBackoff = Math.min(eventsBackoff * 2, 15000);
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (pendingRefresh || Date.now() - lastLoad > 3000) { pendingRefresh = false; load(false); }
+});
+
+setInterval(() => {
+  if (!document.hidden && !busy && Date.now() - lastLoad >= BACKGROUND_EVERY - 1000) load(false);
+}, BACKGROUND_EVERY);
 
 let lastSig = '';
 function viewSig() {

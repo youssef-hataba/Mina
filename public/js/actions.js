@@ -146,4 +146,4 @@ async function addSelected(el) {
   toast(`Added ${dirs.length} project${dirs.length > 1 ? 's' : ''}`);
 }
 
-loadIdes().finally(load);
+loadIdes().finally(() => { load(); watchServer(); });
