@@ -206,11 +206,20 @@ describe('non-JS projects: add → start → running → logs → stop', () => {
       assert.equal(saved.needsInstall, false);
 
       assert.deepEqual(await mina.api('/api/projects/start', { id: saved.id }), { ok: true });
+      const tail = (f) => { try { return fs.readFileSync(f, 'utf8').slice(-1500); } catch { return '(none)'; } };
       const running = await h.waitFor(async () => {
         const p = await project(name);
-        if (p?.state === 'crashed') throw new Error(`crashed:\n${fs.readFileSync(p.logFile.replace(/\.log$/, '.err.log'), 'utf8').slice(-2000)}`);
+        if (p?.state === 'crashed') throw new Error(`crashed:\n${tail(p.logFile.replace(/\.log$/, '.err.log'))}`);
         return p?.state === 'running' && p;
-      }, { timeout: (c.timeout || 120000) - 20000, interval: 1500, what: `${c.name} to run` });
+      }, { timeout: (c.timeout || 120000) - 20000, interval: 1500, what: `${c.name} to run` }).catch(async (e) => {
+        // Everything needed to tell "never listened" from "listening but not linked to the project".
+        const { apps, projects: list } = await mina.apps(true);
+        const p = list.find((x) => x.name === name);
+        const onPort = apps.find((a) => a.port === port);
+        throw new Error(`${e.message}\nstate: ${p?.state}\nport ${port} open: ${await h.portOpen(port)}\n`
+          + `app on port: ${JSON.stringify(onPort && { process: onPort.process, project: onPort.project, framework: onPort.framework })}\n`
+          + `stdout:\n${tail(p.logFile)}\nstderr:\n${tail(p.logFile.replace(/\.log$/, '.err.log'))}`);
+      });
       assert.equal(running.port, port);
       assert.equal(running.framework, c.name);
       assert.equal(running.logLive, true);
