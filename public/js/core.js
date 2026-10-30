@@ -110,8 +110,12 @@ async function load(force = true) {
     btn.classList.remove('spin');
   }
   if (reloadAfter) { reloadAfter = false; return load(true); }
-  // Re-check only while something is booting, and only for a bounded time.
-  if (projects.some((p) => p.state === 'starting' || p.state === 'queued') && Date.now() < watchUntil) setTimeout(() => load(false), 2500);
+  // Re-check only while something is booting, and only for a bounded time. That includes a boot already under
+  // way when the page was opened (a reload, a second tab, Mina restarted): it gets its own window to finish.
+  const booting = projects.some((p) => p.state === 'starting' || p.state === 'queued');
+  if (booting && !watchUntil) watchUntil = Date.now() + 180000;
+  if (!booting) watchUntil = 0;
+  if (booting && Date.now() < watchUntil) setTimeout(() => load(false), 2500);
 }
 
 let lastSig = '';

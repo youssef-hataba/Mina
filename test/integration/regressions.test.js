@@ -179,3 +179,83 @@ describe('no duplicates, real cancellation', () => {
     assert.ok(['stopped', 'crashed'].includes(after.state), after.state);
   });
 });
+
+// ---- Found by running Mina on real projects (Planto: NestJS + Next.js + Vite, a Go API, editor extensions). ----
+
+// A one-file server: { port, host, ipv6Only, title, silentPort } -> listens and serves a page with that title.
+function serverScript(o) {
+  return `
+    const http = require('http');
+    const seen = {};
+    const s = http.createServer((q, r) => {
+      seen[q.url] = (seen[q.url] || 0) + 1;
+      if (q.url === '/__seen') { r.writeHead(200, { 'Content-Type': 'application/json' }); return r.end(JSON.stringify(seen)); }
+      r.writeHead(200, { 'Content-Type': 'text/html' }); r.end('<title>${o.title}</title>');
+    });
+    s.listen({ port: ${o.port}, host: ${JSON.stringify(o.host)}, ipv6Only: ${!!o.ipv6Only} });
+    ${o.silentPort ? `require('net').createServer(() => {}).listen(${o.silentPort}, '127.0.0.1');` : ''}
+  `;
+}
+
+const ipv6 = () => new Promise((resolve) => {
+  const s = net.createServer().once('error', () => resolve(false)).listen({ port: 0, host: '::1' }, () => s.close(() => resolve(true)));
+});
+
+describe('two processes on one port (IPv4 and IPv6)', () => {
+  test('an editor extension on 127.0.0.1:P does not hide the project server on [::]:P, nor answer for it', async (t) => {
+    if (!(await ipv6())) return t.skip('no IPv6 loopback');
+    const port = await h.freePort();
+    // The editor's preview server: tooling (lives under .vscode), bound to IPv4 only.
+    const tooling = path.join(root, '.vscode', 'extensions', 'preview');
+    fs.mkdirSync(tooling, { recursive: true });
+    fs.writeFileSync(path.join(tooling, 'serve.js'), serverScript({ port, host: '127.0.0.1', title: 'crossnote' }));
+    children.push(spawn(process.execPath, [path.join(tooling, 'serve.js')], { stdio: 'ignore' }));
+    await h.waitFor(() => h.portOpen(port, '127.0.0.1'), { what: 'tooling server' });
+    // The user's app on the same port number, IPv6.
+    const app = h.makeProject(root, 'shared-port-app', { deps: ['next'] });
+    fs.writeFileSync(path.join(app, 'server.js'), serverScript({ port, host: '::', ipv6Only: true, title: 'The real app' }));
+    children.push(h.runExternal(app));
+    await h.waitFor(() => h.portOpen(port, '::1'), { what: 'app server' });
+
+    const found = (await mina.apps()).apps.filter((a) => a.port === port);
+    assert.equal(found.length, 1, 'listed once');
+    assert.equal(found[0].project?.name, 'shared-port-app');
+    assert.equal(found[0].title, 'The real app', 'probed on its own address, not the extension\'s');
+  });
+});
+
+describe('a server with an internal second port', () => {
+  test('is listed once, under the port that answers, and its silent port does not slow the scan', async (t) => {
+    const port = await h.freePort();
+    const internal = await h.freePort();
+    const app = h.makeProject(root, 'two-ports', { deps: ['next'] });
+    // Public on all interfaces (like Next.js on [::]), plus a silent internal port on 127.0.0.1.
+    const host = (await ipv6()) ? '::' : '0.0.0.0';
+    fs.writeFileSync(path.join(app, 'server.js'), serverScript({ port, host, title: 'Two ports', silentPort: internal }));
+    children.push(h.runExternal(app));
+    await h.waitFor(async () => (await h.portOpen(port)) && h.portOpen(internal), { what: 'both ports' });
+    const t0 = Date.now();
+    const { apps } = await mina.apps();
+    const took = Date.now() - t0;
+    assert.ok(apps.some((a) => a.port === port && a.project?.name === 'two-ports'));
+    assert.ok(!apps.some((a) => a.port === internal), 'the internal port is not a second app');
+    assert.ok(took < 7500, `scan took ${took} ms: the silent port was waited on`);
+    void t;
+  });
+});
+
+describe('probes stay out of the user\'s logs', () => {
+  test('a backend\'s documentation paths are probed once per process, not on every refresh', async () => {
+    const port = await h.freePort();
+    // Every test file runs its own Mina, and each one scans the whole machine. Inside a .vscode folder the
+    // server is tooling to them (hidden by default), so only this file's Mina, asking for everything, probes it.
+    const app = h.makeProject(path.join(root, '.vscode', 'probe-count'), 'quiet-backend', { deps: ['express'] });
+    fs.writeFileSync(path.join(app, 'server.js'), serverScript({ port, host: '127.0.0.1', title: 'api' }).replace("'text/html'", "'application/json'"));
+    children.push(h.runExternal(app));
+    await h.waitFor(() => h.portOpen(port), { what: 'backend' });
+    for (let i = 0; i < 3; i++) await mina.apps(true);
+    const seen = JSON.parse((await h.request(port, { path: '/__seen' })).text);
+    assert.equal(seen['/docs'], 1, `GET /docs ${seen['/docs']} times`);
+    assert.ok((seen['/'] || 0) <= 1, `GET / ${seen['/']} times in 3 refreshes`);
+  });
+});

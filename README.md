@@ -106,7 +106,7 @@ Servers you started yourself from a normal terminal are detected too. Editor too
   | Django | `manage.py` | `python manage.py runserver`, using the project's `.venv`/`venv`/`env` if there is one |
   | Laravel | `artisan` + `composer.json` | `php artisan serve` |
   | Rails | `Gemfile` + `bin/rails` | `ruby bin/rails server` |
-  | Go | `go.mod` | `go run .` |
+  | Go | `go.mod` | `go run .`, or `go run ./cmd/server` (the server in `cmd/`) for the standard layout |
   | Rust | `Cargo.toml` with a `[package]` | `cargo run` |
   | .NET | a `.csproj` | `dotnet run` |
 

@@ -68,6 +68,9 @@ function header(i) {
     : `<button class="hbtn danger" onclick="kill(${a.pid}, this)">${STOP_ICON}Stop</button>`;
   const saveBtn = !p && a.project ? `<button class="hbtn" onclick="saveApp(${a.port}, this)">+ Save</button>` : '';
   const more = p ? `<button class="hbtn icon" title="More" onclick="moreMenu(this, '${p.id}')">${MORE_ICON}</button>` : '';
+  // Only while the live preview is on screen (a frontend, not in its Logs tab).
+  const previewing = i.kind !== 'backend' && !(p && m === 'logs');
+  const reloadBtn = previewing ? `<button class="hbtn icon reload" title="Reload preview" onclick="reloadPreview(this)">${RELOAD_ICON}</button>` : '';
   const sub = [a.project?.dir, a.title && a.title !== i.name ? a.title : null, `PID ${a.pid}`].filter(Boolean).map(esc).join(' · ');
   return `
     <div class="bar">
@@ -78,6 +81,7 @@ function header(i) {
       ${seg}
       <div class="actions">
         ${openInHtml()}
+        ${reloadBtn}
         <a class="hbtn link ${cls(i)} mono" href="${a.url}" target="_blank" title="Open in a new tab">${shortUrl(a.url)} ↗</a>
         ${saveBtn}${stopBtn}${more}
       </div>

@@ -66,10 +66,33 @@ const DOC_PATHS = ['/api', '/docs', '/swagger', '/api-docs', '/api/docs', '/heal
 
 const listListeners = platform.listListeners;
 
-// Dev servers bind to IPv4 or IPv6 only, so try both.
-async function probe(port, urlPath = '/', timeout = 8000) {
-  const v4 = await probeHost('127.0.0.1', port, urlPath, timeout);
-  return v4.ok ? v4 : probeHost('::1', port, urlPath, timeout);
+// Dev servers bind to IPv4 or IPv6 only, so a probe tries the loopback addresses that reach this process, in order.
+async function probe(port, urlPath = '/', timeout = 8000, hosts = ['127.0.0.1', '::1']) {
+  let answer = { ok: false };
+  for (const host of hosts) {
+    answer = await probeHost(host, port, urlPath, timeout);
+    if (answer.ok) break;
+  }
+  return answer;
+}
+
+// Which loopback addresses reach this listener. Two processes can share a port (an editor's preview server on
+// 127.0.0.1:3001, the user's Next.js on [::]:3001): then 127.0.0.1 belongs to the other one, and asking there
+// would report that process's page as this server's. A wildcard [::] also takes IPv4, unless another process
+// holds IPv4 on the port.
+function hostsFor(l, listeners) {
+  const addrs = l.addrs || [];
+  if (!addrs.length) return ['127.0.0.1', '::1'];
+  const v6 = (a) => a.includes(':');
+  const others = listeners.filter((x) => x.port === l.port && x.pid !== l.pid).flatMap((x) => x.addrs || []);
+  const ownV4 = addrs.some((a) => !v6(a));
+  const ownV6 = addrs.some(v6) || addrs.includes('*');
+  const dualStackV4 = addrs.includes('::') && !others.some((a) => !v6(a));
+  const hosts = [];
+  if (ownV4) hosts.push('127.0.0.1');
+  if (ownV6) hosts.push('::1');
+  if (!ownV4 && dualStackV4) hosts.push('127.0.0.1');
+  return hosts.length ? hosts : ['127.0.0.1', '::1'];
 }
 
 // Next.js compiles the page on first hit, so the timeout is generous. It is a hard deadline for the whole
@@ -151,29 +174,84 @@ function classify(app, project) {
   return { kind: html ? 'frontend' : 'backend', framework: exeName(app.name) };
 }
 
-async function getApps(all) {
+// Requests that arrive while a scan is running share it: the page polls every 2.5 s while something starts,
+// and overlapping scans (each one a PowerShell or lsof run plus HTTP probes) only slowed each other down.
+const scans = new Map();
+function getApps(all) {
+  const key = all ? 'all' : 'dev';
+  if (!scans.has(key)) scans.set(key, scanApps(all).finally(() => scans.delete(key)));
+  return scans.get(key);
+}
+
+// Probes land in the user's server logs ("GET /docs 404"), so they are kept to a minimum: a page that answered
+// is trusted for 30 s, and the documentation paths are looked up once per server process. Keyed by
+// "pid port", so a restarted server (new PID) is probed afresh.
+const PAGE_TTL = 30000;
+const pageCache = new Map();
+const endpointCache = new Map();
+
+async function probeCached(l, timeout) {
+  const key = `${l.pid} ${l.port}`;
+  const hit = pageCache.get(key);
+  if (hit && Date.now() - hit.at < PAGE_TTL) return hit.http;
+  const http = await probe(l.port, '/', timeout, l.hosts);
+  // Only answers are remembered: a server that is still compiling must be asked again next time.
+  if (http.ok) pageCache.set(key, { http, at: Date.now() });
+  return http;
+}
+
+function endpointsOf(a) {
+  const key = `${a.pid} ${a.port}`;
+  if (!endpointCache.has(key)) {
+    endpointCache.set(key, Promise.all(DOC_PATHS.map(async (p) => ({ path: p, res: await probe(a.port, p, 3000, a.hosts) })))
+      .then((hits) => hits.filter((h) => h.res.ok && h.res.status < 400).map((h) => ({ path: h.path, status: h.res.status, type: h.res.type }))));
+  }
+  return endpointCache.get(key);
+}
+
+// Forget servers that are gone, so the caches don't grow and a reused PID+port is probed again.
+function pruneCaches(listeners) {
+  const live = new Set(listeners.map((l) => `${l.pid} ${l.port}`));
+  for (const cache of [pageCache, endpointCache]) for (const key of cache.keys()) if (!live.has(key)) cache.delete(key);
+}
+
+async function scanApps(all) {
   // Anything Mina launched itself always counts, whatever the binary is called (a compiled Go, Rust or
   // .NET server runs under its own name, not "go" or "dotnet").
   // The listener itself counts too: "cargo run" (and sh before it) exec into the server, which then keeps the
   // launcher's own PID instead of running below it.
   const ours = (l) => !!projects.ownerOf(lineage(l));
-  const list = (await listListeners()).filter(
+  const listeners = await listListeners();
+  pruneCaches(listeners);
+  const list = listeners.filter(
     (l) => l.port !== PORT && l.port >= 1024 && !SYSTEM.has(exeName(l.name)) && (all || isDevServer(l) || ours(l))
-  );
-  const probed = await Promise.all(list.map(async (l) => ({ ...l, http: await probe(l.port, '/', all ? 1500 : 8000) })));
+  ).map((l) => ({ ...l, hosts: hostsFor(l, listeners) }));
+  // A process that also listens on all interfaces keeps its loopback-only ports for itself (Next.js's internal
+  // port on 127.0.0.1): those never answer a page, and waiting out the probe on them held every refresh 8 s.
+  const wildcard = new Set(listeners.filter((l) => (l.addrs || []).some((a) => a === '::' || a === '0.0.0.0' || a === '*')).map((l) => l.pid));
+  const internal = (l) => wildcard.has(l.pid) && (l.addrs || []).length > 0 && l.addrs.every((a) => a === '127.0.0.1' || a === '::1');
+  const probed = await Promise.all(list.map(async (l) => ({
+    ...l, http: internal(l) ? { ok: false } : await probeCached(l, all ? 1500 : 8000),
+  })));
   // Dev servers stay even if they did not answer (still compiling); other noise must answer HTTP.
   // Another copy of Mina (on another port, installed from npm or run from a clone) is not a dev server of the user's;
   // it's recognised by its page title, which works wherever it was installed.
-  const apps = probed.filter((a) => (a.http.ok || isDevServer(a) || ours(a)) && !/^Mina\b/.test(a.http.title || ''));
+  // A server that answers on one port and also holds a silent one (Next.js keeps an internal port on 127.0.0.1)
+  // is listed once, under the port that answers.
+  const answering = new Set(probed.filter((a) => a.http.ok).map((a) => a.pid));
+  const shown = probed.filter((a) => (a.http.ok || ((isDevServer(a) || ours(a)) && !answering.has(a.pid)))
+    && !/^Mina\b/.test(a.http.title || ''));
+  // The page lists one app per port. When two shown processes share a port (IPv4 and IPv6), keep the one that
+  // matters most: launched by Mina, then linked to a project, then a dev runtime.
+  const rank = (a) => (ours(a) ? 3 : 0) + (projectOf(a) ? 2 : 0) + (isDevServer(a) ? 1 : 0);
+  const byPort = new Map();
+  for (const a of shown) if (!byPort.has(a.port) || rank(a) > rank(byPort.get(a.port))) byPort.set(a.port, a);
+  const apps = [...byPort.values()];
   knownPids = new Set(apps.map((a) => a.pid));
   return Promise.all(apps.map(async (a) => {
     const project = projectOf(a);
     const { kind, framework } = classify(a, project);
-    let endpoints = [];
-    if (kind === 'backend') {
-      const hits = await Promise.all(DOC_PATHS.map(async (p) => ({ path: p, res: await probe(a.port, p, 3000) })));
-      endpoints = hits.filter((h) => h.res.ok && h.res.status < 400).map((h) => ({ path: h.path, status: h.res.status, type: h.res.type }));
-    }
+    const endpoints = kind === 'backend' ? await endpointsOf(a) : [];
     return {
       port: a.port,
       pid: a.pid,
@@ -204,6 +282,16 @@ const kindOf = (p) => {
 const lineage = (l) => [l.pid, ...(l.chain || [])];
 const projectOf = (l) => projects.ownerOf(lineage(l)) || findProject(l.cmd, l.cwd, l.name);
 
+// The user's dev servers from the listener list alone, without HTTP probing (which waits on slow servers), for
+// start/stop decisions: same filter as the dashboard, so editor tooling that happens to point into a project
+// folder is never matched and never stopped. [{ port, pid, project }]
+function devListeners(listeners) {
+  const ours = (l) => !!projects.ownerOf(lineage(l));
+  return listeners
+    .filter((l) => l.port !== PORT && l.port >= 1024 && !SYSTEM.has(exeName(l.name)) && (isDevServer(l) || ours(l)))
+    .map((l) => ({ port: l.port, pid: l.pid, project: projectOf(l) }));
+}
+
 // Cheap "which project folders are listening" check (no HTTP probing) for start/wait decisions.
 async function listeningDirs(listeners) {
   listeners ||= await listListeners();
@@ -211,11 +299,13 @@ async function listeningDirs(listeners) {
 }
 
 // The project's last known port is now held by some other process.
+// Several processes can hold one port (IPv4 and IPv6); it's a conflict only if none of them is this project.
 function portConflict(p, listeners) {
-  const l = p.lastPort && listeners.find((x) => x.port === p.lastPort);
-  if (!l) return null;
-  const owner = projectOf(l);
-  if (owner && projects.norm(owner.dir) === projects.norm(p.dir)) return null;
+  const on = p.lastPort ? listeners.filter((x) => x.port === p.lastPort) : [];
+  if (!on.length) return null;
+  const owners = on.map((l) => ({ l, owner: projectOf(l) }));
+  if (owners.some(({ owner }) => owner && projects.norm(owner.dir) === projects.norm(p.dir))) return null;
+  const { l, owner } = owners[0];
   return { project: p.name, port: p.lastPort, by: owner?.name || l.name || `PID ${l.pid}` };
 }
 
@@ -338,8 +428,8 @@ async function handle(req, res) {
       if (!members.length) return send(res, 404, { error: 'unknown group' });
       const stopAll = async () => {
         members.forEach((p) => projects.queued.delete(p.id));
-        lastApps = await getApps(false);
-        await Promise.all(members.map((p) => projects.stop(p, lastApps)));
+        const live = devListeners(await listListeners());
+        await Promise.all(members.map((p) => projects.stop(p, live)));
       };
       if (req.url === '/api/groups/stop') { await stopAll(); return send(res, 200, { ok: true }); }
       // Renaming writes the name onto every member, which also turns a folder-based group into an explicit one.
@@ -382,15 +472,15 @@ async function handle(req, res) {
       const flight = projects.claim(p.id);
       if (!flight) return send(res, 200, { alreadyStarting: true });
       try {
-        // Fresh scan, so a copy started from a terminal since the last refresh still counts.
-        lastApps = await getApps(false);
-        const running = lastApps.find((a) => a.project && projects.norm(a.project.dir) === projects.norm(p.dir));
+        // Fresh listener list, so a copy started from a terminal since the last refresh still counts.
+        const listeners = await listListeners();
+        const running = devListeners(listeners).find((a) => a.project && projects.norm(a.project.dir) === projects.norm(p.dir));
         if (running) return send(res, 200, { alreadyRunning: true, port: running.port });
         // Launched by Mina and still booting (not listening yet).
         if (projects.ownPid(p.id)) return send(res, 200, { alreadyStarting: true });
         if (!projects.detect(p.dir)) return send(res, 400, { error: `Folder not found or no longer runnable: ${p.dir}` });
         if (projects.needsInstall(p) && !body.install) return send(res, 200, { needsInstall: true });
-        const conflict = !body.force && portConflict(p, await listListeners());
+        const conflict = !body.force && portConflict(p, listeners);
         if (conflict) return send(res, 200, { conflicts: [conflict] });
         try { await projects.start(p, { install: !!body.install, flight }); }
         catch (e) { return send(res, 500, { error: String(e.message || e) }); }
@@ -414,7 +504,7 @@ async function handle(req, res) {
       res.on('close', () => clearInterval(timer));
       return;
     }
-    if (req.url === '/api/projects/stop') { await projects.stop(p, lastApps); return send(res, 200, { ok: true }); }
+    if (req.url === '/api/projects/stop') { await projects.stop(p, devListeners(await listListeners())); return send(res, 200, { ok: true }); }
     return send(res, 404, { error: 'not found' });
   }
 

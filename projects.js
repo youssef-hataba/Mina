@@ -344,6 +344,8 @@ function withStatus(apps, classifyDeps) {
     else if (queued.has(p.id)) state = 'queued';
     else if (launching.has(p.id)) state = 'starting';
     else if (own) state = isAlive(own.pid) ? 'starting' : 'crashed';
+    // Launched before Mina restarted and still booting (a long first build, say): still ours, still starting.
+    else if (ownPid(p.id)) state = 'starting';
     // Remember the port so a later start can warn when something else took it.
     if (app && p.lastPort !== app.port) { p.lastPort = app.port; dirty = true; }
     const info = detect(p.dir);

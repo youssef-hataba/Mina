@@ -14,16 +14,21 @@ const isAlive = (pid) => { try { process.kill(pid, 0); return true; } catch { re
 const output = (cmd, args, opts = {}) => new Promise((resolve) =>
   execFile(cmd, args, { maxBuffer: 1 << 24, ...opts }, (err, stdout) => resolve(String(stdout || ''))));
 
-// ---- Listening ports: [{ port, pid, name, cmd, cwd, chain }] ----
+// ---- Listening ports: [{ port, pid, addrs, name, cmd, cwd, chain }] ----
+
+// One entry per (port, process), not per port: two processes can hold the same port on different addresses
+// (an editor's preview server on 127.0.0.1:3000, the user's NestJS on [::]:3000), and keeping one per port
+// hid the real dev server behind the tooling. addrs says where each one listens, so it can be probed there.
 
 function listListenersWin() {
   const ps = `
     [Console]::OutputEncoding = [Text.Encoding]::UTF8
-    $c = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Sort-Object LocalPort -Unique
+    $c = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Group-Object LocalPort, OwningProcess
     # One process query for all listeners; a query per port was the slow part of every refresh.
     $procs = @{}
     Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CommandLine | ForEach-Object { $procs[[int]$_.ProcessId] = $_ }
-    $out = foreach ($x in $c) {
+    $out = foreach ($g in $c) {
+      $x = $g.Group[0]
       $p = $procs[[int]$x.OwningProcess]
       # Ancestor PIDs, so a server we launched is traced back to its project even with a relative command line.
       $chain = @(); $cur = [int]$x.OwningProcess
@@ -32,13 +37,15 @@ function listListenersWin() {
         if (-not $pp -or $chain -contains [int]$pp) { break }
         $chain += [int]$pp; $cur = [int]$pp
       }
-      [pscustomobject]@{ port = $x.LocalPort; pid = $x.OwningProcess; name = $p.Name; cmd = $p.CommandLine; chain = $chain }
+      $addrs = @($g.Group | ForEach-Object { [string]$_.LocalAddress } | Sort-Object -Unique)
+      [pscustomobject]@{ port = $x.LocalPort; pid = $x.OwningProcess; addrs = $addrs; name = $p.Name; cmd = $p.CommandLine; chain = $chain }
     }
-    $out | ConvertTo-Json -Compress`;
+    $out | Sort-Object port | ConvertTo-Json -Compress`;
   return output('powershell', ['-NoProfile', '-Command', ps]).then((stdout) => {
     try {
       const data = JSON.parse(stdout || '[]');
-      return Array.isArray(data) ? data : [data];
+      // ConvertTo-Json turns one-element arrays into plain values; put them back.
+      return (Array.isArray(data) ? data : [data]).map((l) => ({ ...l, addrs: [].concat(l.addrs ?? []), chain: [].concat(l.chain ?? []) }));
     } catch { return []; }
   });
 }
@@ -76,16 +83,21 @@ function exeOf(pid, comm) {
 }
 
 async function listListenersPosix() {
-  const byPort = new Map();
+  const byKey = new Map(); // "port pid" -> { port, pid, addrs }
   let pid = 0;
   for (const line of (await output('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pn'])).split('\n')) {
     if (line[0] === 'p') pid = Number(line.slice(1));
-    const m = line[0] === 'n' && line.match(/:(\d+)$/);
-    if (m && pid && !byPort.has(Number(m[1]))) byPort.set(Number(m[1]), pid);
+    // "n127.0.0.1:3000", "n*:3000", "n[::1]:3000"
+    const m = line[0] === 'n' && line.match(/^n(.*):(\d+)$/);
+    if (!m || !pid) continue;
+    const key = `${m[2]} ${pid}`;
+    if (!byKey.has(key)) byKey.set(key, { port: Number(m[2]), pid, addrs: [] });
+    const addr = m[1].replace(/^\[|\]$/g, '');
+    if (!byKey.get(key).addrs.includes(addr)) byKey.get(key).addrs.push(addr);
   }
   const [comm, command] = await Promise.all([psTable('comm'), psTable('command')]);
-  const dirs = await cwds([...new Set(byPort.values())]);
-  return [...byPort].sort((a, b) => a[0] - b[0]).map(([port, pid]) => {
+  const dirs = await cwds([...new Set([...byKey.values()].map((l) => l.pid))]);
+  return [...byKey.values()].sort((a, b) => a.port - b.port).map(({ port, pid, addrs }) => {
     const chain = [];
     for (let cur = pid, i = 0; i < 12; i++) {
       const pp = command.get(cur)?.ppid;
@@ -93,7 +105,7 @@ async function listListenersPosix() {
       chain.push(pp);
       cur = pp;
     }
-    return { port, pid, name: exeOf(pid, comm.get(pid)?.value), cmd: command.get(pid)?.value || '', cwd: dirs.get(pid) || null, chain };
+    return { port, pid, addrs, name: exeOf(pid, comm.get(pid)?.value), cmd: command.get(pid)?.value || '', cwd: dirs.get(pid) || null, chain };
   });
 }
 

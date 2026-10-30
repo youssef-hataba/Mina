@@ -43,12 +43,12 @@ mina/
 ### `server.js`
 - Creates the HTTP server on `127.0.0.1` and applies every security check (see [Security model](#security-model)).
 - **Discovery pipeline** (`getApps`):
-  1. `platform.listListeners()` returns `{ port, pid, name, cmd, cwd?, chain? }`.
+  1. `platform.listListeners()` returns one entry per (port, process): `{ port, pid, addrs, name, cmd, cwd?, chain? }`. Two processes can hold one port number, one on IPv4 and one on IPv6 (an editor extension on `127.0.0.1:3000` next to NestJS on `[::]:3000`), so entries are never merged by port.
   2. Filter out Mina's own port, ports below 1024, system processes and (unless `?all=1`) anything that isn't a dev runtime or that lives in editor tooling folders.
-  3. `probe()` sends an HTTP GET to each port on IPv4 first and falls back to IPv6, reading the status, content type and `<title>`.
+  3. `probe()` sends an HTTP GET to the loopback addresses that reach that process (`hostsFor`). It never asks an address another process holds on the same port, and it skips the loopback-only ports of a process that also listens on all interfaces (Next.js keeps an internal one). A page that answered is cached for 30 s per (pid, port). Requests that arrive during a scan share it.
   4. `findProject()` walks up from paths in the command line (or the process's working directory) to the nearest project file (`package.json`, `manage.py`, `artisan`, `bin/rails`, `go.mod`, `Cargo.toml`, `*.csproj`; see `runners.identify`).
   5. `classify()` decides frontend or backend and the framework from the dependencies. Backend dependencies win, because an API may list `react` for emails. If nothing matches, the `text/html` content type decides.
-  6. Backends are probed on `DOC_PATHS` to list working documentation and health endpoints.
+  6. Backends are probed on `DOC_PATHS` once per (pid, port) to list working documentation and health endpoints, so the probes don't fill the server's log. If two shown processes share a port, the one Mina launched, or else the one linked to a project, is listed.
 - **Group orchestration** (`runGroup`): starts the backends in one wave, waits up to 90 s until they are listening (or have exited), then starts the frontends.
 - **Port conflicts** (`portConflict`): compares the project's last known port with the current listeners.
 

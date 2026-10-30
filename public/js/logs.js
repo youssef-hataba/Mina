@@ -15,7 +15,9 @@ function logBox(p, tall) {
     </div>`;
 }
 
-function appendLog(text, isErr) {
+// Lines are coloured by what they say, not by stream: Go's log package, Python's logging and many servers write
+// everything (startup messages included) to stderr. forceErr is for Mina's own error notes.
+function appendLog(text, forceErr) {
   const el = document.getElementById('log');
   if (!el || !text) return;
   if (el.querySelector('.note')) el.textContent = '';
@@ -24,7 +26,7 @@ function appendLog(text, isErr) {
   for (const line of text.replace(ANSI, '').replace(/\r/g, '').split('\n')) {
     if (!line.trim()) continue;
     const span = document.createElement('span');
-    span.className = isErr || ERR_LINE.test(line) ? 'l-err' : WARN_LINE.test(line) ? 'l-warn' : '';
+    span.className = forceErr ? 'l-err' : WARN_LINE.test(line) ? 'l-warn' : ERR_LINE.test(line) ? 'l-err' : '';
     span.textContent = line + '\n';
     frag.appendChild(span);
   }
@@ -61,7 +63,7 @@ async function streamLog(id) {
         const msg = JSON.parse(buf.slice(0, nl));
         buf = buf.slice(nl + 1);
         appendLog(msg.out, false);
-        appendLog(msg.err, true);
+        appendLog(msg.err, false);
       }
     }
   } catch (e) {

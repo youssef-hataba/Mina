@@ -38,6 +38,19 @@ function csproj(dir) {
   return safe ? { name: safe.replace(/\.csproj$/i, ''), arg: ` --project ${safe}` } : null;
 }
 
+// The Go package to run: the module root if it is a main package, otherwise the server among cmd/* (the
+// standard layout keeps cmd/server next to helpers like cmd/seed or cmd/migrate). Never a guess between helpers.
+const GO_SERVERS = ['server', 'api', 'app', 'web', 'main', 'http', 'backend'];
+const isMain = (dir) => list(dir).some((f) => f.endsWith('.go') && !f.endsWith('_test.go') && /^package main\b/m.test(read(dir, f)));
+function goEntry(dir) {
+  if (isMain(dir)) return '.';
+  const cmd = path.join(dir, 'cmd');
+  const mains = list(cmd).filter((d) => SAFE.test(d) && isMain(path.join(cmd, d)));
+  const mod = (read(dir, 'go.mod').match(/^module\s+(\S+)/m)?.[1] || '').split('/').pop();
+  const pick = GO_SERVERS.find((n) => mains.includes(n)) || (mains.includes(mod) ? mod : null) || (mains.length === 1 ? mains[0] : null);
+  return pick ? `./cmd/${pick}` : null;
+}
+
 // In priority order. Laravel and Rails apps usually carry a package.json too (for Vite or esbuild), but its
 // dev script only builds assets; the app itself is the PHP/Ruby server. A generic marker (go.mod, Cargo.toml,
 // .csproj) next to a runnable package.json is more often tooling, so Node wins over those.
@@ -77,9 +90,9 @@ const RUNNERS = [
   },
   {
     id: 'go', framework: 'Go', tool: 'go',
-    match: (dir) => has(dir, 'go.mod'),
+    match: (dir) => has(dir, 'go.mod') && !!goEntry(dir),
     name: (dir) => (read(dir, 'go.mod').match(/^module\s+(\S+)/m)?.[1] || '').split('/').pop(),
-    command: () => 'go run .',
+    command: (dir) => `go run ${goEntry(dir)}`,
     install: () => null, // go run downloads missing modules itself
   },
   {

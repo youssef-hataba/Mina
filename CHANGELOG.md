@@ -12,11 +12,13 @@ First public release.
 - Finds every dev server listening on your machine, including ones started from a normal terminal, and matches it to its project folder.
 - Labels each server as frontend or backend, with its framework: Next.js, Vite, Nuxt, Angular, Astro, SvelteKit, Gatsby, Vue, React, CRA, NestJS, Express, Fastify, Koa, Hapi, Hono, AdonisJS, Django, Laravel, Rails, Go, Rust and .NET.
 - Frontends open in an embedded preview. For backends, Mina lists the documentation and health endpoints that answer (`/docs`, `/swagger`, `/health`, `/graphql`…).
-- Editor tooling and system services are hidden unless *Show everything* is on.
+- Editor tooling and system services are hidden unless *Show everything* is on. A dev server that shares its port number with an editor extension (one on IPv4, the other on IPv6) is still found, and probed on its own address.
+- Probes stay out of your server logs as much as possible: documentation paths are checked once per server process, and a page that answered is trusted for 30 seconds.
 
 ### Running projects
 - Add a project folder, or a parent folder with several projects inside.
-- Start, stop, groups and logs work for Node.js (npm, pnpm, yarn, bun), Django (using the project's virtualenv), Laravel, Rails, Go, Rust and .NET.
+- Start, stop, groups and logs work for Node.js (npm, pnpm, yarn, bun), Django (using the project's virtualenv), Laravel, Rails, Go (including the `cmd/server` layout), Rust and .NET.
+- A project still booting when Mina restarts (a long first build) keeps showing as starting, and can't be started twice.
 - Asks before installing missing dependencies (`npm install`, `composer install`).
 - Stop ends the whole process tree, so no orphaned server keeps a port.
 - Duplicate starts are refused, and a stop pressed during startup cancels the launch.

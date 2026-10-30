@@ -112,3 +112,15 @@ function groupMenu(anchor, group) {
 
 const MORE_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
 const STOP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+const RELOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>';
+
+// The preview is another origin, so its own location can't be read or reloaded from here; setting src again
+// loads it afresh (from the app's start page) without reloading the dashboard.
+function reloadPreview(btn) {
+  const frame = document.querySelector('#view iframe');
+  if (!frame) return;
+  btn.classList.add('spin');
+  frame.addEventListener('load', () => btn.classList.remove('spin'), { once: true });
+  setTimeout(() => btn.classList.remove('spin'), 10000);
+  frame.src = frame.src;
+}

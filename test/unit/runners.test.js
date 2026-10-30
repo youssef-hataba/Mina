@@ -88,15 +88,41 @@ describe('Rails', () => {
 });
 
 describe('Go', () => {
-  test('go.mod → go run ., named after the last part of the module path', () => {
-    const d = runners.detect(folder('goapp', { 'go.mod': 'module github.com/acme/billing-api\n\ngo 1.22\n' }));
+  const MAIN = 'package main\n\nfunc main() {}\n';
+
+  test('go.mod with a main package at the root → go run ., named after the last part of the module path', () => {
+    const d = runners.detect(folder('goapp', { 'go.mod': 'module github.com/acme/billing-api\n\ngo 1.22\n', 'main.go': MAIN }));
     assert.equal(d.runner, 'go');
     assert.equal(d.command, 'go run .');
     assert.equal(d.name, 'billing-api');
   });
 
+  test('standard layout: the server in cmd/server, next to helper programs → go run ./cmd/server', () => {
+    // The shape of a real project: cmd/server plus cmd/seed and cmd/update_images, code under internal/.
+    const d = runners.detect(folder('go-cmd', {
+      'go.mod': 'module github.com/kemit/trip-planner', 'cmd/server/main.go': MAIN, 'cmd/seed/main.go': MAIN,
+      'cmd/update_images/main.go': MAIN, 'internal/handlers/trip.go': 'package handlers',
+    }));
+    assert.equal(d.command, 'go run ./cmd/server');
+  });
+
+  test('cmd/<module name>, or the only program in cmd/, is the server', () => {
+    assert.equal(runners.detect(folder('go-modname', { 'go.mod': 'module example.com/billing', 'cmd/billing/main.go': MAIN, 'cmd/migrate/main.go': MAIN })).command, 'go run ./cmd/billing');
+    assert.equal(runners.detect(folder('go-single', { 'go.mod': 'module x', 'cmd/gateway/main.go': MAIN })).command, 'go run ./cmd/gateway');
+  });
+
+  test('no guessing: only helpers in cmd/, or a library without main, is not runnable', () => {
+    assert.equal(runners.detect(folder('go-helpers', { 'go.mod': 'module x', 'cmd/seed/main.go': MAIN, 'cmd/migrate/main.go': MAIN })), null);
+    assert.equal(runners.detect(folder('go-lib', { 'go.mod': 'module x', 'lib.go': 'package lib' })), null);
+    assert.equal(runners.detect(folder('go-test-only', { 'go.mod': 'module x', 'x_test.go': MAIN })), null);
+  });
+
+  test('a cmd/ folder with an unsafe name is never put into the command', () => {
+    assert.equal(runners.detect(folder('go-unsafe', { 'go.mod': 'module x', 'cmd/a&b/main.go': MAIN })), null);
+  });
+
   test('a runnable package.json next to go.mod wins (the Go file is usually tooling there)', () => {
-    const d = runners.detect(folder('go-and-node', { 'go.mod': 'module x', 'package.json': '{"scripts":{"dev":"vite"}}' }));
+    const d = runners.detect(folder('go-and-node', { 'go.mod': 'module x', 'main.go': MAIN, 'package.json': '{"scripts":{"dev":"vite"}}' }));
     assert.equal(d.runner, 'node');
   });
 });
@@ -174,7 +200,7 @@ describe('scan() and saved projects across technologies', () => {
       'api/manage.py': 'import django',
       'shop/artisan': '<?php', 'shop/composer.json': '{"name":"x/shop"}',
       'web/package.json': '{"name":"web","scripts":{"dev":"vite"}}',
-      'svc/go.mod': 'module svc',
+      'svc/go.mod': 'module svc', 'svc/main.go': 'package main',
       'vendor/package.json': '{"scripts":{"dev":"x"}}',
       'target/Cargo.toml': '[package]\nname="t"',
       'venv/manage.py': 'django',

@@ -362,6 +362,23 @@ describe('Mina restarts', () => {
     await mina.api('/api/projects/stop', { id: p.id });
     await h.waitFor(async () => !(await h.portOpen(port)), { timeout: 15000, what: 'port to close' });
   });
+
+  test('a project still booting when Mina restarts (a long first build) stays "starting", not "stopped"', { timeout: 120000 }, async () => {
+    const port = await h.freePort();
+    const p = await addAndGet(h.makeProject(root, 'slow-boot', { server: { port, delay: 25000 } }));
+    await mina.api('/api/projects/start', { id: p.id });
+    await waitState('slow-boot', 'starting', 20000);
+
+    const { home, port: minaPort } = mina;
+    await mina.stop();
+    mina = await h.startMina({ home, port: minaPort });
+
+    assert.equal((await project('slow-boot')).state, 'starting');
+    assert.deepEqual(await mina.api('/api/projects/start', { id: p.id }), { alreadyStarting: true }, 'no second copy');
+    await waitState('slow-boot', 'running', 60000);
+    await mina.api('/api/projects/stop', { id: p.id });
+    await h.waitFor(async () => !(await h.portOpen(port)), { timeout: 15000, what: 'port to close' });
+  });
 });
 
 describe('unusual folder names survive the whole round trip', () => {
