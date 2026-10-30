@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const projects = require('./projects');
+const runners = require('./runners');
 const ides = require('./ides');
 const platform = require('./platform');
 
@@ -21,6 +22,7 @@ let lastApps = [];
 const SYSTEM = new Set(['system', 'svchost', 'lsass', 'wininit', 'services', 'spoolsv', 'idle']);
 // Runtimes that usually mean "a dev server I started"; everything else is hidden unless ?all=1.
 const DEV = new Set(['node', 'bun', 'deno', 'python', 'pythonw', 'php', 'ruby', 'java', 'dotnet', 'go', 'httpd', 'nginx', 'caddy', 'uvicorn']);
+const JS_RUNTIMES = new Set(['node', 'bun', 'deno']);
 // Editors and apps run their own Node servers; those are tooling, not the user's dev servers.
 const TOOLING_DIR = platform.WIN
   ? /\\(\.vscode|\.antigravity[^\\]*|\.cursor|AppData|Program Files[^\\]*)\\/i
@@ -107,7 +109,8 @@ function probeHost(host, port, urlPath, timeout) {
 
 // Guess the project folder (and its dependencies) from the process command line, then its working
 // directory (macOS/Linux only; it catches servers whose title hides the path, like "next-server").
-function findProject(cmd, cwd) {
+function findProject(cmd, cwd, exe) {
+  const js = JS_RUNTIMES.has(exeName(exe));
   const args = argsOf(cmd);
   const nm = args.match(NM_PATH);
   // Quoted paths first, so a space in the path ("C:\Users\John Smith\api\server.js") doesn't cut it short.
@@ -120,13 +123,9 @@ function findProject(cmd, cwd) {
   for (let dir of candidates) {
     try { if (fs.existsSync(dir) && fs.statSync(dir).isFile()) dir = path.dirname(dir); } catch { continue; }
     for (let d = dir; d && d !== path.dirname(d); d = path.dirname(d)) {
-      const pkg = path.join(d, 'package.json');
-      if (fs.existsSync(pkg)) {
-        let json = {};
-        try { json = JSON.parse(fs.readFileSync(pkg, 'utf8')); } catch {}
-        const deps = { ...json.dependencies, ...json.devDependencies };
-        return { name: json.name || path.basename(d), dir: d, deps: Object.keys(deps) };
-      }
+      // package.json, manage.py, artisan, bin/rails, go.mod, Cargo.toml, *.csproj (runners.js).
+      const found = runners.identify(d, { js });
+      if (found) return { ...found, dir: d };
       if (SYSTEM_DIR.test(d)) break;
     }
   }
@@ -142,22 +141,28 @@ function classifyDeps(deps) {
   return null;
 }
 
+// Node projects by their dependencies; Django, Laravel, Rails, Go, Rust and .NET by their technology, with
+// frontend/backend read from what the server answers (a Rails or Laravel app often serves HTML pages).
 function classify(app, project) {
+  const html = /text\/html/i.test(app.http.type || '');
+  if (project?.framework) return { kind: html ? 'frontend' : 'backend', framework: project.framework };
   const known = classifyDeps(project?.deps || []);
   if (known) return known;
-  const html = /text\/html/i.test(app.http.type || '');
   return { kind: html ? 'frontend' : 'backend', framework: exeName(app.name) };
 }
 
 async function getApps(all) {
+  // Anything Mina launched itself always counts, whatever the binary is called (a compiled Go, Rust or
+  // .NET server runs under its own name, not "go" or "dotnet").
+  const ours = (l) => !!projects.ownerOf(l.chain || []);
   const list = (await listListeners()).filter(
-    (l) => l.port !== PORT && l.port >= 1024 && !SYSTEM.has(exeName(l.name)) && (all || isDevServer(l))
+    (l) => l.port !== PORT && l.port >= 1024 && !SYSTEM.has(exeName(l.name)) && (all || isDevServer(l) || ours(l))
   );
   const probed = await Promise.all(list.map(async (l) => ({ ...l, http: await probe(l.port, '/', all ? 1500 : 8000) })));
   // Dev servers stay even if they did not answer (still compiling); other noise must answer HTTP.
   // Another copy of Mina (on another port, installed from npm or run from a clone) is not a dev server of the user's;
   // it's recognised by its page title, which works wherever it was installed.
-  const apps = probed.filter((a) => (a.http.ok || isDevServer(a)) && !/^Mina\b/.test(a.http.title || ''));
+  const apps = probed.filter((a) => (a.http.ok || isDevServer(a) || ours(a)) && !/^Mina\b/.test(a.http.title || ''));
   knownPids = new Set(apps.map((a) => a.pid));
   return Promise.all(apps.map(async (a) => {
     const project = projectOf(a);
@@ -186,11 +191,15 @@ async function getApps(all) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const kindOf = (p) => classifyDeps(projects.detect(p.dir)?.deps || [])?.kind || 'frontend';
+// For "start group" ordering. Django, Laravel, Rails, Go, Rust and .NET apps count as backends: they start first.
+const kindOf = (p) => {
+  const info = projects.detect(p.dir);
+  return info?.kind || classifyDeps(info?.deps || [])?.kind || 'frontend';
+};
 
 // A launched-by-us ancestor is the surest sign (it also covers relative "node server.js" commands and hoisted
 // monorepo binaries); otherwise guess from the command line and working directory.
-const projectOf = (l) => projects.ownerOf(l.chain || []) || findProject(l.cmd, l.cwd);
+const projectOf = (l) => projects.ownerOf(l.chain || []) || findProject(l.cmd, l.cwd, l.name);
 
 // Cheap "which project folders are listening" check (no HTTP probing) for start/wait decisions.
 async function listeningDirs(listeners) {
@@ -313,7 +322,8 @@ async function handle(req, res) {
     }
     if (req.url === '/api/projects/scan') {
       const found = projects.scan(String(body.dir || '').trim(), (deps) => !!classifyDeps(deps));
-      return send(res, 200, { candidates: found.map((f) => ({ ...f, ...(classifyDeps(f.deps) || { kind: 'frontend', framework: f.pm }), deps: undefined })) });
+      const label = (f) => (f.framework && { kind: f.kind, framework: f.framework }) || classifyDeps(f.deps) || { kind: 'frontend', framework: f.pm };
+      return send(res, 200, { candidates: found.map((f) => ({ ...f, ...label(f), deps: undefined })) });
     }
     if (req.url === '/api/projects/add') {
       projects.addProjects((Array.isArray(body.dirs) ? body.dirs : []).map(String));

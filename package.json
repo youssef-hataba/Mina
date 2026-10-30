@@ -32,7 +32,8 @@
     "server.js",
     "projects.js",
     "ides.js",
-    "platform.js"
+    "platform.js",
+    "runners.js"
   ],
   "engines": {
     "node": ">=18"
@@ -48,6 +49,12 @@
     "dashboard",
     "ports",
     "process-manager",
-    "developer-tools"
+    "developer-tools",
+    "django",
+    "laravel",
+    "rails",
+    "go",
+    "rust",
+    "dotnet"
   ]
 }

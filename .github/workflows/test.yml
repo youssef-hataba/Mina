@@ -42,6 +42,10 @@ jobs:
       - uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.3'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
       - name: Enable pnpm and yarn, WEBrick for Ruby 3
         run: |
           npm install -g pnpm yarn

@@ -19,6 +19,7 @@ mina/
 ├── server.js           HTTP server, security checks, API routes, discovery and classification
 ├── projects.js         Saved projects: detection, config, start/stop, logs, groups
 ├── platform.js         Per-OS code: listing listeners, launching, killing, folder picker
+├── runners.js          Per-technology: how to recognise and run Node, Django, Laravel, Rails, Go, Rust, .NET
 ├── ides.js             Detecting installed editors and opening folders in them
 ├── index.html          Dashboard shell (the server injects the session token)
 └── public/
@@ -53,7 +54,8 @@ mina/
 
 ### `projects.js`
 - Stores the config in `~/.mina/config.json`. A project's ID is the first 10 hex characters of the SHA-1 of its normalized path.
-- `detect(dir)` reads `package.json`, picks the first script in `dev → start:dev → develop → serve → start`, and picks the package manager from the lockfile.
+- `detect(dir)` asks `runners.js` how to run the folder. For Node, that means the first script in `dev → start:dev → develop → serve → start`, with the package manager taken from the lockfile.
+- `start()` re-detects the folder at start time and runs that command. The `script` and `pm` saved in the config are only for display, so editing the config can't change what runs.
 - `scan(dir)` looks one level down. Child projects win over the parent folder, because a workspace root's `dev` script usually just runs the children.
 - `start()` validates the script name and package manager against an allow-list, then calls `platform.launch()` with a clean environment (`BROWSER=none`, `FORCE_COLOR=0`, no `ELECTRON_RUN_AS_NODE`).
 - `stop()` kills every PID listening in the project's folder, plus the launcher PID recorded in the `.pid` file. If the launch is still in flight, it cancels it instead.
@@ -70,6 +72,20 @@ mina/
   | `stopped` | None of the above |
 
 - Groups: an explicit `group` string wins (`""` means no group). Otherwise, projects that share a parent folder are grouped under that folder's name.
+
+### `runners.js`
+One entry per technology, in priority order: Laravel, Rails, Django, Node, Go, Rust, .NET. Each one has:
+- `match(dir)`: the files that mark it,
+- `name(dir)`: the project name,
+- `command(dir)`: the command that runs it,
+- `install(dir)`: what to install first, if anything.
+
+Laravel and Rails come before Node because their `package.json` only builds assets. Go, Rust and .NET come after Node, because a `go.mod` next to a runnable `package.json` is usually tooling.
+
+- `detect(dir)` returns plain data for a runnable folder: the command, the framework, and the install step.
+- `identify(dir, { js })` is looser and is used to attribute a running server: a `package.json` without scripts still names a Node project, and a JS process inside a Laravel folder belongs to its `package.json`.
+- **Commands are built only from constants** and from names checked against `SAFE` (`^[\w.-]+$`), never from file contents or the config. `safeCommand()` checks every command one last time against `^[\w .:\\/-]+$`, so no shell operator can reach `cmd.exe` or `sh`.
+- Django's interpreter is the project's own virtualenv (`.venv`, `venv`, `env`) if one exists, as a relative path: the command runs inside the project folder, so the folder's name never enters it.
 
 ### `platform.js`
 Everything that differs between operating systems lives here, behind one interface:

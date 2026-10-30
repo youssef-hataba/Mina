@@ -138,7 +138,7 @@ function projectPanel(i) {
         <div class="kvline"><span>Command</span><span class="mono">${esc(p.command)}</span></div>
         <div class="kvline"><span>Group</span><span>${p.group ? esc(p.group) : '<span class="note">None</span>'}</span></div>
         ${p.lastPort ? `<div class="kvline"><span>Last port</span><span class="mono">:${p.lastPort}</span></div>` : ''}
-        ${p.needsInstall ? '<div class="kvline"><span>node_modules</span><span class="warn-text">not installed, Mina will ask before starting</span></div>' : ''}
+        ${p.needsInstall ? `<div class="kvline"><span>${esc(p.installWhat || 'node_modules')}</span><span class="warn-text">not installed, Mina will ask before running <code>${esc(p.installCommand || 'npm install')}</code></span></div>` : ''}
       </div>
       <div class="center">${main}</div>
       ${p.hasLog || p.state === 'starting' ? logBox(p, false) : ''}
@@ -203,7 +203,7 @@ function addPanel() {
           <span class="kind ${cls(c)}">${c.kind.toUpperCase()} · ${esc(c.framework)}</span>
           <span class="cname">${esc(c.name)}</span>
           <span class="mono cdir">${esc(c.dir)}</span>
-          <span class="mono cdir">${esc(c.pm)} run ${esc(c.script)}</span>
+          <span class="mono cdir">${esc(c.command)}</span>
           ${c.added ? '<span class="note">Already added</span>' : ''}
         </label>`).join('')}
       <button class="play" style="margin-top:14px" onclick="addSelected(this)">Add selected</button>

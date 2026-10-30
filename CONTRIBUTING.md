@@ -52,6 +52,8 @@ projects are created in `test/.tmp/` and removed afterwards.
 |---|---|
 | `unit/projects.test.js` | Script and package manager detection, scanning, config, groups, log reading, start-input validation |
 | `unit/platform.test.js` | Listing listeners (IPv4/IPv6), launching in odd folders, start times, killing whole process trees |
+| `unit/runners.test.js` | Recognising Django, Laravel, Rails, Go, Rust and .NET folders; virtualenvs; priorities; command safety |
+| `integration/runtimes.test.js` | Really starting and stopping Django, Laravel, Rails, Go, Rust and .NET projects through Mina |
 | `unit/regressions.test.js` | Recycled PIDs, prototype-named groups, same-named folders, corrupt configs, UTF-8 splits, UNC paths |
 | `integration/security.test.js` | Host/DNS rebinding, token, Origin, CORS, content type, malformed bodies, path traversal, PID/folder allow-lists |
 | `integration/discovery.test.js` | All 17 frameworks, IPv6, silent servers, editor tooling, Python/PHP/Ruby/Deno/Bun/Go servers |
@@ -80,6 +82,13 @@ const FRAMEWORK_NAMES = { ... };
 ```
 
 Add the package name to the right list and give it a display name. Order matters: more specific frameworks go before generic ones (e.g. `next` before `react`).
+
+## Adding a technology
+
+Add an entry to `RUNNERS` in `runners.js` (`match`, `name`, `command`, `install`), in the right place in the
+priority order. The command must be a constant, or built only from names that pass `SAFE`. Then add a detection
+test to `test/unit/runners.test.js` and a real start/stop case to `test/integration/runtimes.test.js`, and
+install the toolchain in `.github/workflows/test.yml`.
 
 ## Adding an editor
 

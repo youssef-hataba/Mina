@@ -86,9 +86,9 @@ mina install-startup
 
 ### Automatic discovery
 Mina finds every process listening on a port and works out:
-- **Which project** it belongs to, by reading the process command line, its working directory and the nearest `package.json`.
+- **Which project** it belongs to, by reading the process command line, its working directory and the nearest project file (`package.json`, `manage.py`, `artisan`, `bin/rails`, `go.mod`, `Cargo.toml`, `*.csproj`).
 - **What it is:** frontend or backend.
-- **Which framework:** Next.js, Vite, Nuxt, Angular, Astro, SvelteKit, Gatsby, Vue, React, CRA, NestJS, Express, Fastify, Koa, Hapi, Hono, AdonisJS and others.
+- **Which framework:** Next.js, Vite, Nuxt, Angular, Astro, SvelteKit, Gatsby, Vue, React, CRA, NestJS, Express, Fastify, Koa, Hapi, Hono, AdonisJS, Django, Laravel, Rails, Go, Rust, .NET and others.
 
 Servers you started yourself from a normal terminal are detected too. Editor tooling (VS Code, Cursor and similar) and system services are hidden by default. Turn on *Show everything* to see them.
 
@@ -98,9 +98,20 @@ Servers you started yourself from a normal terminal are detected too. Editor too
 
 ### Start and stop projects
 - Add a single project folder, or a **parent folder** and Mina finds every project inside it.
-- It detects the **package manager** from the lockfile (npm, pnpm, yarn, bun) and the **script** (`dev`, `start:dev`, `develop`, `serve`, `start`).
-- It offers to run `install` first when `node_modules` is missing.
-- **Stop** kills the whole process tree (`cmd`/`sh` → `npm` → `node`), so no orphaned servers are left holding your ports.
+- It works out the command from the files in the folder:
+
+  | Project | Recognised by | Command |
+  |---|---|---|
+  | Node.js | `package.json` with a `dev`, `start:dev`, `develop`, `serve` or `start` script | `npm`/`pnpm`/`yarn`/`bun run <script>` (from the lockfile) |
+  | Django | `manage.py` | `python manage.py runserver`, using the project's `.venv`/`venv`/`env` if there is one |
+  | Laravel | `artisan` + `composer.json` | `php artisan serve` |
+  | Rails | `Gemfile` + `bin/rails` | `ruby bin/rails server` |
+  | Go | `go.mod` | `go run .` |
+  | Rust | `Cargo.toml` with a `[package]` | `cargo run` |
+  | .NET | a `.csproj` | `dotnet run` |
+
+- It offers to install dependencies first when they are missing (`npm install` for `node_modules`, `composer install` for `vendor`).
+- **Stop** kills the whole process tree (`cmd`/`sh` → `npm` → `node`, or `php artisan serve` → `php -S`), so no orphaned servers are left holding your ports.
 
 ### Logs
 Live `stdout` and `stderr` for every project Mina started, with errors highlighted. Logs are saved to disk, so they're still there after a refresh.
@@ -156,7 +167,7 @@ Mina detects installed editors and opens any project or group in one click: VS C
 
 1. **Discover.** List every TCP listener using the OS's own tools.
 2. **Filter.** Keep developer runtimes (node, bun, deno, python, php, ruby, java, dotnet, go…) and drop editor tooling and system processes.
-3. **Identify.** Walk up from the process's command line or working directory to the nearest `package.json`, then classify it by its dependencies.
+3. **Identify.** Walk up from the process's command line or working directory to the nearest project file, then classify it by its dependencies (Node) or its technology (Django, Laravel, Rails, Go, Rust, .NET).
 4. **Probe.** Send HTTP requests to read the page title and content type, and check backends for well-known documentation and health endpoints.
 5. **Act.** Start, stop, group and stream logs through a locked-down local API.
 
@@ -239,7 +250,14 @@ Mina can only capture the output of processes it started itself. Servers you sta
 <details>
 <summary><b>Does it work with non-Node projects?</b></summary>
 
-Discovery and previews work for any HTTP server (Python, PHP, Ruby, Java, .NET, Go…). Start, stop and logs currently work with projects that have a `package.json`.
+Yes. Discovery and previews work for any HTTP server (Python, PHP, Ruby, Java, .NET, Go…). Start, stop, groups and logs work for Node.js, Django, Laravel, Rails, Go, Rust and .NET projects (see the table above).
+
+A few things to know:
+- **Django** uses the project's virtualenv (`.venv`, `venv` or `env`) when there is one; otherwise the system Python. Mina never creates a virtualenv or installs Python packages for you.
+- **Laravel** runs `php artisan serve` only. If you also want Vite's hot reload, add the project's frontend as its own entry or keep `npm run dev` in a terminal.
+- **Rails** gems are installed per machine, so Mina doesn't ask about `bundle install`; a missing gem shows up in the log.
+- **FastAPI and Flask** are found and previewed when they run, but Mina can't start them yet: their command depends on your module name (`uvicorn main:app`).
+
 </details>
 
 <details>

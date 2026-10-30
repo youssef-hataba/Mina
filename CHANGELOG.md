@@ -5,9 +5,12 @@ All notable changes to this project are documented here. The format follows [Kee
 ## [Unreleased]
 
 ### Added
+- Start, stop, groups and logs for **Django, Laravel, Rails, Go, Rust and .NET** projects, not just Node.js. The command is worked out from the folder (`manage.py`, `artisan`, `bin/rails`, `go.mod`, `Cargo.toml`, `*.csproj`), and Django uses the project's virtualenv. Laravel offers `composer install` when `vendor/` is missing. Running servers of these kinds are labelled with their framework.
+- Servers Mina started itself are always listed, even when the binary isn't named after a known runtime (compiled Go, Rust and .NET servers).
 - Automated test suite (`npm test`, built on `node:test`, no dependencies) and CI on Windows, macOS and Linux with Node 18–24.
 
 ### Security
+- What runs for a project is now always derived from the folder at start time, never read from `config.json`, so a hand-edited config can't choose the command. Every command is also checked against a strict character allow-list before it reaches the shell.
 - A malformed URL (e.g. `/%ff.css`) or a non-ASCII `X-Token` header crashed the server. Any web page could trigger the first one through an `<img>` tag. Neither can crash it now, and no single request can take the server down.
 - A PID left behind by a server that has since exited (after a crash or a reboot) could be reused by the OS for an unrelated process, which Mina would then adopt and kill. Mina now records each launcher's start time and only trusts a PID while the start time still matches.
 

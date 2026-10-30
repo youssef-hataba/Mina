@@ -11,7 +11,7 @@ async function startProject(id, el) {
     if (res.alreadyRunning) { await tell('Already running', `This project is already running on port <b>${res.port}</b>.`); return load(); }
     if (res.error) { await tell('Could not start', esc(res.error)); return load(); }
     if (res.needsInstall) {
-      if (!await ask('Install dependencies?', `<b>${esc(p.name)}</b> has no <code>node_modules</code>. Run <code>${esc(p.command.split(' ')[0])} install</code> first?`, { ok: 'Install & start' })) return;
+      if (!await ask('Install dependencies?', `<b>${esc(p.name)}</b> has no <code>${esc(p.installWhat || 'node_modules')}</code>. Run <code>${esc(p.installCommand || 'npm install')}</code> first?`, { ok: 'Install & start' })) return;
       opts.install = true;
     } else if (res.conflicts) {
       if (!await ask('Port already in use', `<ul>${conflictText(res.conflicts)}</ul>Start anyway? It will probably pick another port.`, { ok: 'Start anyway' })) return;
@@ -28,7 +28,7 @@ async function startGroup(group, el) {
   for (;;) {
     const res = await withBusy(el, () => api('/api/groups/start', opts));
     if (res.needsInstall) {
-      if (!await ask('Install dependencies?', `These projects have no <code>node_modules</code>: <b>${res.needsInstall.map(esc).join(', ')}</b>. Install them first?`, { ok: 'Install & start' })) return;
+      if (!await ask('Install dependencies?', `These projects need their dependencies installed: <b>${res.needsInstall.map(esc).join(', ')}</b>. Install them first?`, { ok: 'Install & start' })) return;
       opts.install = true;
     } else if (res.conflicts) {
       if (!await ask('Port already in use', `<ul>${conflictText(res.conflicts)}</ul>Start the group anyway?`, { ok: 'Start anyway' })) return;

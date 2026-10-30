@@ -4,12 +4,13 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const platform = require('./platform');
+const runners = require('./runners');
 
 const HOME = path.join(os.homedir(), '.mina');
 const CONFIG = path.join(HOME, 'config.json');
 const LOGS = path.join(HOME, 'logs');
-const SCRIPT_ORDER = ['dev', 'start:dev', 'develop', 'serve', 'start'];
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage']);
+// Dependency, build and environment folders of every supported technology: never projects of their own.
+const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'vendor', 'target', 'bin', 'obj', 'venv', 'env', '__pycache__']);
 
 // id -> { pid, startedAt } for processes this dashboard spawned.
 const spawned = new Map();
@@ -43,28 +44,9 @@ function saveConfig(cfg) {
   fs.renameSync(tmp, CONFIG);
 }
 
-function packageManager(dir) {
-  const has = (f) => fs.existsSync(path.join(dir, f));
-  if (has('pnpm-lock.yaml')) return 'pnpm';
-  if (has('yarn.lock')) return 'yarn';
-  if (has('bun.lockb') || has('bun.lock')) return 'bun';
-  return 'npm';
-}
-
-// A folder is runnable if its package.json has one of the usual dev scripts.
-function detect(dir) {
-  let json;
-  try { json = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')); } catch { return null; }
-  const script = SCRIPT_ORDER.find((s) => json.scripts?.[s]);
-  if (!script) return null;
-  return {
-    dir: path.resolve(dir),
-    name: json.name || path.basename(dir),
-    script,
-    pm: packageManager(dir),
-    deps: Object.keys({ ...json.dependencies, ...json.devDependencies }),
-  };
-}
+// A folder is runnable if some runner recognises it: a package.json with a dev script, manage.py, artisan,
+// bin/rails, go.mod, Cargo.toml or a .csproj. See runners.js.
+const detect = (dir) => runners.detect(dir);
 
 // Subfolder projects win over the folder itself: a workspace root's "dev" usually just runs them all via
 // concurrently, and its ports belong to the subfolders, so it could never show as running.
@@ -82,7 +64,8 @@ function scan(dir, isApp = () => false) {
     .filter(Boolean);
   const self = detect(dir);
   if (!children.length) return self ? [self] : [];
-  return self && isApp(self.deps) ? [self, ...children] : children;
+  // A Django/Laravel/Rails/Go/... app is always an app; a Node root only when it has framework dependencies.
+  return self && (self.runner !== 'node' || isApp(self.deps)) ? [self, ...children] : children;
 }
 
 function addProjects(dirs) {
@@ -91,7 +74,8 @@ function addProjects(dirs) {
   for (const dir of dirs) {
     const found = detect(dir);
     if (!found || known.has(norm(found.dir))) continue;
-    cfg.projects.push({ id: idFor(found.dir), dir: found.dir, name: found.name, script: found.script, pm: found.pm });
+    cfg.projects.push({ id: idFor(found.dir), dir: found.dir, name: found.name, runner: found.runner,
+      ...(found.runner === 'node' && { script: found.script, pm: found.pm }) });
     known.add(norm(found.dir));
   }
   saveConfig(cfg);
@@ -104,9 +88,8 @@ function removeProject(id) {
 }
 
 const getProject = (id) => loadConfig().projects.find((p) => p.id === id);
-// Only when there is something to install: npm creates no node_modules for a project without dependencies,
-// so checking the folder alone would ask "install?" on every start, forever.
-const needsInstall = (p) => !fs.existsSync(path.join(p.dir, 'node_modules')) && (detect(p.dir)?.deps.length ?? 0) > 0;
+// Dependencies to install first (node_modules, vendor), per runner. See runners.js.
+const needsInstall = (p) => !!detect(p.dir)?.install;
 const { isAlive } = platform;
 
 const logPaths = (id) => ({ out: path.join(LOGS, `${id}.log`), err: path.join(LOGS, `${id}.err.log`) });
@@ -127,17 +110,21 @@ function release(id, flight) {
 }
 
 // Pass the flight from claim() when the caller claimed earlier; otherwise start() claims for itself.
+// The command comes from the folder as it is now (runners.js), never from the saved config: a hand-edited
+// config.json can point at a folder, but it can't choose what runs there.
 async function start(p, { install = false, flight: claimed } = {}) {
-  if (typeof p.script !== 'string' || !/^[\w:.-]+$/.test(p.script) || !['npm', 'pnpm', 'yarn', 'bun'].includes(p.pm)) throw new Error('bad script');
+  const info = detect(p.dir);
+  if (!info) throw new Error(`Folder not found or no longer runnable: ${p.dir}`);
+  const steps = [...(install && info.install ? [info.install] : []), info.command];
+  if (!steps.every(runners.safeCommand)) throw new Error('bad command');
   const flight = claimed || claim(p.id);
   if (!flight) throw new Error('already starting');
   try {
     if (flight.cancelled) return null;
     fs.mkdirSync(LOGS, { recursive: true });
-    const run = `${p.pm} run ${p.script}`;
     const { out, err } = logPaths(p.id);
     const pid = await platform.launch({
-      command: install ? `${p.pm} install && ${run}` : run,
+      command: steps.join(' && '),
       dir: p.dir, out, err, pidFile: pidPath(p.id),
       // BROWSER=none stops CRA-style servers from opening their own tab.
       // Same clean env as the editors get: an Electron-based dev server would misbehave with ELECTRON_RUN_AS_NODE set.
@@ -360,16 +347,20 @@ function withStatus(apps, classifyDeps) {
     // Remember the port so a later start can warn when something else took it.
     if (app && p.lastPort !== app.port) { p.lastPort = app.port; dirty = true; }
     const info = detect(p.dir);
-    const { kind, framework } = classifyDeps(info?.deps || []) || { kind: 'frontend', framework: p.pm };
+    const { kind, framework } = (info?.framework && { kind: info.kind, framework: info.framework })
+      || classifyDeps(info?.deps || []) || { kind: 'frontend', framework: info?.pm || p.pm || 'node' };
     return {
       ...p,
       state,
       kind: app?.kind || kind,
       framework: app?.framework || framework,
       port: app?.port ?? null,
+      runner: info?.runner || p.runner || 'node',
       missing: !info,
-      needsInstall: needsInstall(p),
-      command: `${p.pm} run ${p.script}`,
+      needsInstall: !!info?.install,
+      installCommand: info?.install || null,
+      installWhat: info?.installWhat || null,
+      command: info?.command || '',
       logFile: logPaths(p.id).out,
       hasLog: fs.existsSync(logPaths(p.id).out),
       // Live only when the running process is one we launched; otherwise the file is from an older run.
@@ -388,7 +379,7 @@ function ownerOf(chain) {
     const pid = ownPid(p.id);
     if (pid && chain.includes(pid)) {
       const info = detect(p.dir);
-      return { name: info?.name || p.name, dir: p.dir, deps: info?.deps || [] };
+      return { name: info?.name || p.name, dir: p.dir, deps: info?.deps || [], framework: info?.framework || null };
     }
   }
   return null;

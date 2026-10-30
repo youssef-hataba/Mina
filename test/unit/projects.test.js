@@ -222,24 +222,44 @@ describe('config: add / remove / groups', () => {
   });
 });
 
-describe('start() input validation', () => {
-  // These values come from config.json, which a user (or a bad actor with file access) can edit by hand.
+describe('what start() runs can only come from the folder, never from config.json', () => {
+  // config.json can be edited by hand (or by anything with file access), so its values must not reach a shell.
   const evil = [
     { script: 'dev & calc', pm: 'npm' },
     { script: 'dev; rm -rf ~', pm: 'npm' },
     { script: 'dev$(whoami)', pm: 'npm' },
-    { script: 'dev`id`', pm: 'npm' },
-    { script: 'dev|more', pm: 'npm' },
-    { script: 'dev\nwhoami', pm: 'npm' },
-    { script: 'dev', pm: 'calc' },
     { script: 'dev', pm: 'npm & calc' },
-    { script: '', pm: 'npm' },
+    { runner: 'calc', command: 'calc.exe' },
   ];
   for (const p of evil) {
-    test(`rejects ${JSON.stringify(p)}`, async () => {
-      await assert.rejects(projects.start({ id: 'x', dir: root, ...p }), /bad script/);
+    test(`a folder that isn't runnable is refused, whatever the config says: ${JSON.stringify(p)}`, async () => {
+      await assert.rejects(projects.start({ id: 'x', dir: root, ...p }), /not runnable|not found/);
     });
   }
+
+  test('a runnable folder runs its detected command, ignoring script/pm saved in the config', () => {
+    const dir = h.makeProject(root, 'cfg-ignored');
+    const info = projects.detect(dir);
+    assert.equal(info.command, 'npm run dev');
+    assert.ok(require('../../runners').safeCommand(info.command));
+  });
+
+  test('shell operators can never pass the final command check', () => {
+    const { safeCommand } = require('../../runners');
+    for (const bad of ['npm run dev & calc', 'a;b', 'a|b', 'a`b`', 'a$(b)', 'a > b', 'a\nb', 'a "b"', "a 'b'", 'a %PATH%', '', null]) {
+      assert.equal(safeCommand(bad), false, JSON.stringify(bad));
+    }
+    for (const ok of ['npm run dev', 'pnpm run start:dev', 'php artisan serve', 'ruby bin/rails server', '.venv\\Scripts\\python.exe manage.py runserver', 'go run .', 'dotnet run --project Api.csproj']) {
+      assert.equal(safeCommand(ok), true, ok);
+    }
+  });
+
+  test('a package.json "dev" script with shell syntax in its VALUE is still run as "npm run dev"', () => {
+    // The script body is npm's business (it runs whatever the project defines, as in a terminal); only the
+    // script NAME enters Mina's command, and that name is one of a fixed list.
+    const dir = h.makeProject(root, 'odd-script', { scripts: { dev: 'node a.js & node b.js', 'dev & calc': 'x' } });
+    assert.equal(projects.detect(dir).command, 'npm run dev');
+  });
 });
 
 describe('readLogs()', () => {
