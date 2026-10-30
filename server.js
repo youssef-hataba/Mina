@@ -154,7 +154,9 @@ function classify(app, project) {
 async function getApps(all) {
   // Anything Mina launched itself always counts, whatever the binary is called (a compiled Go, Rust or
   // .NET server runs under its own name, not "go" or "dotnet").
-  const ours = (l) => !!projects.ownerOf(l.chain || []);
+  // The listener itself counts too: "cargo run" (and sh before it) exec into the server, which then keeps the
+  // launcher's own PID instead of running below it.
+  const ours = (l) => !!projects.ownerOf(lineage(l));
   const list = (await listListeners()).filter(
     (l) => l.port !== PORT && l.port >= 1024 && !SYSTEM.has(exeName(l.name)) && (all || isDevServer(l) || ours(l))
   );
@@ -199,7 +201,8 @@ const kindOf = (p) => {
 
 // A launched-by-us ancestor is the surest sign (it also covers relative "node server.js" commands and hoisted
 // monorepo binaries); otherwise guess from the command line and working directory.
-const projectOf = (l) => projects.ownerOf(l.chain || []) || findProject(l.cmd, l.cwd, l.name);
+const lineage = (l) => [l.pid, ...(l.chain || [])];
+const projectOf = (l) => projects.ownerOf(lineage(l)) || findProject(l.cmd, l.cwd, l.name);
 
 // Cheap "which project folders are listening" check (no HTTP probing) for start/wait decisions.
 async function listeningDirs(listeners) {
