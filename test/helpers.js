@@ -23,13 +23,22 @@ function tmpDir(prefix = 'd') {
   return dir;
 }
 
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.unref();
-    s.on('error', reject);
-    s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
-  });
+// Test files run in parallel, and port 0 hands out ports in sequence, so two files could pick the same port
+// between "free" and "bound". Each test process walks its own block of ports instead.
+const PORT_BASE = 20000 + (process.pid % 300) * 100;
+let portCursor = 0;
+const tryPort = (port) => new Promise((resolve) => {
+  const s = net.createServer();
+  s.unref();
+  s.on('error', () => resolve(false));
+  s.listen(port, '127.0.0.1', () => s.close(() => resolve(true)));
+});
+async function freePort() {
+  for (let i = 0; i < 100; i++) {
+    const port = PORT_BASE + (portCursor++ % 100);
+    if (await tryPort(port) && !(await portOpen(port, '::1'))) return port;
+  }
+  throw new Error('no free port in this test process\'s block');
 }
 
 // Is anything accepting connections on this port (IPv4 or IPv6 loopback)?
@@ -117,6 +126,9 @@ function isolatedEnv(home, extra = {}) {
   // npm stays offline-friendly and quiet: no audit, fund or update-check requests during "install".
   const env = { ...process.env, HOME: home, USERPROFILE: home, npm_config_audit: 'false', npm_config_fund: 'false', npm_config_update_notifier: 'false' };
   delete env.MINA_PORT; // the caller's own setting must not leak in; a test passes it explicitly when it wants one
+  // Toolchains that live under the real home keep working with the fake one (rustup finds no toolchain otherwise).
+  env.RUSTUP_HOME ||= path.join(os.homedir(), '.rustup');
+  env.CARGO_HOME ||= path.join(os.homedir(), '.cargo');
   return { ...env, ...extra };
 }
 

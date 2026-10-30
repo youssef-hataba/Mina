@@ -114,7 +114,7 @@ describe('launch() + killTree()', () => {
     const err = path.join(root, 'l.err');
     const pidFile = path.join(root, 'l.pid');
     const script = path.join(dir, 's.js');
-    fs.writeFileSync(script, "console.log('cwd=' + process.cwd()); console.error('to-stderr');");
+    fs.writeFileSync(script, "console.log('cwd=' + process.cwd()); console.error('to-stderr'); setTimeout(() => {}, 3000);"); // alive like a server, so its start time can be read
     const pid = await platform.launch({ command: `node s.js`, dir, out, err, pidFile, env: process.env });
     assert.ok(pid > 0);
     // "pid startTime": the start time is what later tells this launcher apart from a recycled PID.

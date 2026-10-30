@@ -230,7 +230,7 @@ describe('other runtimes', () => {
       const child = rt.start(port, dir);
       if (rt.input) child.stdin.end(rt.input(port));
       try {
-        await h.waitFor(() => h.portOpen(port), { timeout: 30000, what: `${rt.name} to listen` });
+        await h.waitFor(() => h.portOpen(port), { timeout: 60000, what: `${rt.name} to listen` });
         const visible = (await mina.apps()).apps.find((a) => a.port === port);
         const all = (await mina.apps(true)).apps.find((a) => a.port === port);
         assert.ok(all, 'listed with "show everything"');

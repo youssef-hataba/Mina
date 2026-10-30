@@ -147,7 +147,12 @@ async function launchPosix({ command, dir, out, err, pidFile, env }) {
   }
   if (!child.pid) throw new Error('could not start');
   child.unref();
-  const start = (await startTimes([child.pid])).get(child.pid) || 0;
+  // Right after spawn, ps can miss the new process; ask again a few times while it is alive.
+  let start = 0;
+  for (let i = 0; i < 4 && !start && isAlive(child.pid); i++) {
+    if (i) await sleep(150);
+    start = (await startTimes([child.pid])).get(child.pid) || 0;
+  }
   fs.writeFileSync(pidFile, `${child.pid} ${start}`);
   return child.pid;
 }
