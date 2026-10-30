@@ -145,11 +145,12 @@ describe('no duplicates, real cancellation', () => {
     await h.waitFor(async () => !(await h.portOpen(port)), { timeout: 15000, what: 'port close' });
   });
 
-  test('cancelling one queued project in a group keeps it from starting', { timeout: 90000 }, async () => {
+  test('cancelling one queued project in a group keeps it from starting', { timeout: 120000 }, async () => {
     const ws = path.join(root, 'cancel-one');
     const apiPort = await h.freePort();
     const webPort = await h.freePort();
-    h.makeProject(ws, 'api', { deps: ['express'], server: { port: apiPort, type: 'json', delay: 10000 } });
+    // A slow backend keeps the frontend queued long enough to be checked, even when the machine is busy.
+    h.makeProject(ws, 'api', { deps: ['express'], server: { port: apiPort, type: 'json', delay: 25000 } });
     h.makeProject(ws, 'web', { deps: ['vite'], server: { port: webPort, marker: path.join(ws, 'web.up') } });
     await mina.api('/api/projects/add', { dirs: [path.join(ws, 'api'), path.join(ws, 'web')] });
     await mina.api('/api/groups/start', { group: 'cancel-one' });
@@ -157,7 +158,7 @@ describe('no duplicates, real cancellation', () => {
     const web = (await mina.apps()).projects.find((x) => x.dir === path.resolve(path.join(ws, 'web')));
     assert.equal(web.state, 'queued');
     await mina.api('/api/projects/stop', { id: web.id });
-    await h.waitFor(() => h.portOpen(apiPort), { timeout: 30000, what: 'api up' });
+    await h.waitFor(() => h.portOpen(apiPort), { timeout: 60000, what: 'api up' });
     await h.sleep(5000);
     assert.equal(fs.existsSync(path.join(ws, 'web.up')), false, 'the cancelled frontend never started');
     await mina.api('/api/groups/stop', { group: 'cancel-one' });
@@ -188,14 +189,16 @@ function serverScript(o) {
     const http = require('http');
     // Requests counted per User-Agent: several Minas (one per test file) may probe the same server.
     const seen = {};
+    let silentConnections = 0; // connections made to the silent side port
     const s = http.createServer((q, r) => {
       const by = (seen[q.headers['user-agent'] || ''] ||= {});
       by[q.url] = (by[q.url] || 0) + 1;
       if (q.url === '/__seen') { r.writeHead(200, { 'Content-Type': 'application/json' }); return r.end(JSON.stringify(seen)); }
+      if (q.url === '/__silent') { r.writeHead(200, { 'Content-Type': 'application/json' }); return r.end(String(silentConnections)); }
       r.writeHead(200, { 'Content-Type': 'text/html' }); r.end('<title>${o.title}</title>');
     });
     s.listen({ port: ${o.port}, host: ${JSON.stringify(o.host)}, ipv6Only: ${!!o.ipv6Only} });
-    ${o.silentPort ? `require('net').createServer(() => {}).listen(${o.silentPort}, '127.0.0.1');` : ''}
+    ${o.silentPort ? `require('net').createServer(() => { silentConnections++; }).listen(${o.silentPort}, '127.0.0.1');` : ''}
   `;
 }
 
@@ -227,7 +230,7 @@ describe('two processes on one port (IPv4 and IPv6)', () => {
 });
 
 describe('a server with an internal second port', () => {
-  test('is listed once, under the port that answers, and its silent port does not slow the scan', async (t) => {
+  test('is listed once, under the port that answers, and its silent port is never probed', async (t) => {
     const port = await h.freePort();
     const internal = await h.freePort();
     const app = h.makeProject(root, 'two-ports', { deps: ['next'] });
@@ -236,12 +239,13 @@ describe('a server with an internal second port', () => {
     fs.writeFileSync(path.join(app, 'server.js'), serverScript({ port, host, title: 'Two ports', silentPort: internal }));
     children.push(h.runExternal(app));
     await h.waitFor(async () => (await h.portOpen(port)) && h.portOpen(internal), { what: 'both ports' });
-    const t0 = Date.now();
+    // Counted at the server rather than timed: how long a scan takes depends on everything else on the machine.
+    const silentHits = async () => Number((await h.request(port, { path: '/__silent', host: host === '::' ? '::1' : '127.0.0.1' })).text);
+    const before = await silentHits(); // our own readiness check above connected once
     const { apps } = await mina.apps();
-    const took = Date.now() - t0;
     assert.ok(apps.some((a) => a.port === port && a.project?.name === 'two-ports'));
     assert.ok(!apps.some((a) => a.port === internal), 'the internal port is not a second app');
-    assert.ok(took < 7500, `scan took ${took} ms: the silent port was waited on`);
+    assert.equal(await silentHits(), before, 'Mina connected to the internal port (and would wait out its probe)');
     void t;
   });
 });

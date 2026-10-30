@@ -13,7 +13,7 @@ First public release.
 - Labels each server as frontend or backend, with its framework: Next.js, Vite, Nuxt, Angular, Astro, SvelteKit, Gatsby, Vue, React, CRA, NestJS, Express, Fastify, Koa, Hapi, Hono, AdonisJS, Django, Laravel, Rails, Go, Rust and .NET.
 - Frontends open in an embedded preview. For backends, Mina lists the documentation and health endpoints that answer (`/docs`, `/swagger`, `/health`, `/graphql`…).
 - Editor tooling and system services are hidden unless *Show everything* is on. A dev server that shares its port number with an editor extension (one on IPv4, the other on IPv6) is still found, and probed on its own address.
-- Probes stay out of your server logs as much as possible: documentation paths are checked once per server process, and a page that answered is trusted for 30 seconds.
+- Probes stay out of your server logs as much as possible: documentation paths are checked once per server process, and a page that answered is trusted for 30 seconds. A server that didn't answer is given the full wait once, then 2 seconds on later refreshes, so a hung server can't slow every refresh.
 - Light on the machine: on Windows, a refresh first asks netstat (about 0.05 s) whether any listening port changed, and only runs the full PowerShell listing when something did (or once a minute). Refreshes drop from about 2.5 s to about 0.05 s.
 
 ### Running projects
@@ -38,6 +38,7 @@ First public release.
 ### Security
 - Listens on `127.0.0.1` only, with a per-session token, Origin and Host checks against DNS rebinding, JSON-only POST, and anti-framing headers.
 - Only stops processes from its latest scan, or launchers it verified as its own by PID and start time, so a recycled PID is never killed.
+- On Windows, a process keeps its parent's PID after that parent exits, and the PID can be reused by a process Mina launches. Mina only follows a parent that is older than its child, so an unrelated server (a system service, say) is never taken for one of its own, and never stopped.
 - The command for a project is derived from its folder at start time, never read from the config, and checked against a strict character allow-list before it reaches the shell.
 - Malformed requests are answered with an error and can't take the server down.
 

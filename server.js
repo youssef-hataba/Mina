@@ -199,13 +199,18 @@ const PAGE_TTL = 30000;
 const pageCache = new Map();
 const endpointCache = new Map();
 
+// The first probe of a server is patient (Next.js compiles the page on its first request). One that already
+// stayed silent gets 2 s on later refreshes: a hung server would otherwise hold every refresh for the full wait.
+const SILENT_RETRY = 2000;
+const silent = new Set();
+
 async function probeCached(l, timeout) {
   const key = `${l.pid} ${l.port}`;
   const hit = pageCache.get(key);
   if (hit && Date.now() - hit.at < PAGE_TTL) return hit.http;
-  const http = await probe(l.port, '/', timeout, l.hosts);
+  const http = await probe(l.port, '/', silent.has(key) ? Math.min(timeout, SILENT_RETRY) : timeout, l.hosts);
   // Only answers are remembered: a server that is still compiling must be asked again next time.
-  if (http.ok) pageCache.set(key, { http, at: Date.now() });
+  if (http.ok) { pageCache.set(key, { http, at: Date.now() }); silent.delete(key); } else silent.add(key);
   return http;
 }
 
@@ -221,7 +226,7 @@ function endpointsOf(a) {
 // Forget servers that are gone, so the caches don't grow and a reused PID+port is probed again.
 function pruneCaches(listeners) {
   const live = new Set(listeners.map((l) => `${l.pid} ${l.port}`));
-  for (const cache of [pageCache, endpointCache]) for (const key of cache.keys()) if (!live.has(key)) cache.delete(key);
+  for (const cache of [pageCache, endpointCache, silent]) for (const key of cache.keys()) if (!live.has(key)) cache.delete(key);
 }
 
 async function scanApps(all) {

@@ -54,15 +54,21 @@ function listListenersWinFull() {
     $c = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Group-Object LocalPort, OwningProcess
     # One process query for all listeners; a query per port was the slow part of every refresh.
     $procs = @{}
-    Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CommandLine | ForEach-Object { $procs[[int]$_.ProcessId] = $_ }
+    Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CommandLine, CreationDate | ForEach-Object { $procs[[int]$_.ProcessId] = $_ }
     $out = foreach ($g in $c) {
       $x = $g.Group[0]
       $p = $procs[[int]$x.OwningProcess]
       # Ancestor PIDs, so a server we launched is traced back to its project even with a relative command line.
+      # Windows keeps a process's parent PID after that parent exits, and the PID can then be reused by any new
+      # process (one Mina just launched, say). A real parent is older than its child; a younger "parent" is a
+      # stranger with a recycled PID, and the chain stops there, or an unrelated server would be taken for Mina's.
       $chain = @(); $cur = [int]$x.OwningProcess
       for ($i = 0; $i -lt 12; $i++) {
-        $pp = $procs[$cur].ParentProcessId
+        $child = $procs[$cur]
+        $pp = $child.ParentProcessId
         if (-not $pp -or $chain -contains [int]$pp) { break }
+        $parent = $procs[[int]$pp]
+        if (-not $parent -or ($child.CreationDate -and $parent.CreationDate -and $parent.CreationDate -gt $child.CreationDate)) { break }
         $chain += [int]$pp; $cur = [int]$pp
       }
       $addrs = @($g.Group | ForEach-Object { [string]$_.LocalAddress } | Sort-Object -Unique)
