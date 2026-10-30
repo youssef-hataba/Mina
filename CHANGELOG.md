@@ -4,51 +4,41 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
-### Added
-- Start, stop, groups and logs for **Django, Laravel, Rails, Go, Rust and .NET** projects, not just Node.js. The command is worked out from the folder (`manage.py`, `artisan`, `bin/rails`, `go.mod`, `Cargo.toml`, `*.csproj`), and Django uses the project's virtualenv. Laravel offers `composer install` when `vendor/` is missing. Running servers of these kinds are labelled with their framework.
-- Servers Mina started itself are always listed, even when the binary isn't named after a known runtime (compiled Go, Rust and .NET servers).
-- Automated test suite (`npm test`, built on `node:test`, no dependencies) and CI on Windows, macOS and Linux with Node 18–24.
-
-### Security
-- What runs for a project is now always derived from the folder at start time, never read from `config.json`, so a hand-edited config can't choose the command. Every command is also checked against a strict character allow-list before it reaches the shell.
-- A malformed URL (e.g. `/%ff.css`) or a non-ASCII `X-Token` header crashed the server. Any web page could trigger the first one through an `<img>` tag. Neither can crash it now, and no single request can take the server down.
-- A PID left behind by a server that has since exited (after a crash or a reboot) could be reused by the OS for an unrelated process, which Mina would then adopt and kill. Mina now records each launcher's start time and only trusts a PID while the start time still matches.
-
-### Fixed
-- A scan could hang forever when a local server streamed (SSE, long-poll) or stalled after sending headers.
-- A group named `toString`, `constructor`, `__proto__`… crashed every page load until the config was edited by hand.
-- Starting a project whose folder was deleted crashed Mina on macOS and Linux.
-- On Windows, folders with `[` or `]` in their name could not be started.
-- Two quick clicks on Start could launch two copies. Stop pressed right after Start could be lost. Cancelling one queued project in a group didn't keep it from starting.
-- Projects without dependencies asked to run `install` on every start.
-- Two different parent folders with the same name were merged into one group.
-- In hoisted monorepos (`root/node_modules/.bin/next`), the server was attributed to the root instead of the app.
-- On Windows, servers started from paths with spaces weren't linked to their project.
-- Request bodies with non-ASCII paths could be corrupted, and bodies over 10 KB were silently dropped (now up to 1 MB, otherwise `413`).
-- Logs could show broken characters when a read ended in the middle of a multi-byte character.
-- A corrupt `config.json` was silently replaced by an empty one. It is now kept as `config.json.broken-<time>`, and saves are atomic.
-- `mina --port abc`, `--port 70000` and `--port` with no value fell back to 4747 or printed a stack trace. `mina --port N install-startup` ignored the command, and `--port=N` is now supported.
-- `mina` exited silently when the port was held by a server that never finished its response.
-- On Windows, the startup entry broke for user names with non-ASCII characters. On Linux, it broke for paths containing `%`.
-- The dashboard said "Mina was restarted" for any refused action, not just an expired token. Start errors are now shown to the user.
-- Scanning a parent folder now also offers the parent app itself when it has helper subprojects (e.g. `e2e/`).
-- The preview frame is sandboxed, so a previewed page can't navigate the dashboard.
-
-## [0.1.0] - 2026-10-29
+## [0.1.0] - 2026-10-30
 
 First public release.
 
-### Added
-- Automatic discovery of every listening dev server, matched to its project folder, with frontend/backend and framework detection.
-- Embedded previews for frontends and documentation/health endpoint detection for backends.
-- Adding projects (single folders or parent folders), with package manager and script detection.
-- Start and stop with whole-process-tree termination, plus an install prompt when `node_modules` is missing.
-- Live log streaming with error highlighting, saved under `~/.mina/logs/`.
-- Groups: automatic by parent folder or named by you, with ordered *Start group* (backends first) and port-conflict warnings.
-- Open in editor for VS Code, Cursor, Windsurf, Zed, Sublime Text, JetBrains IDEs and more.
-- CLI: `--port`, `--no-open`, `install-startup`, `uninstall-startup`.
-- Support for Windows, macOS and Linux.
-- Security: per-session token, Origin and Host checks, JSON-only POST, PID and folder allow-lists, localhost-only binding, anti-framing.
+### Discovery
+- Finds every dev server listening on your machine, including ones started from a normal terminal, and matches it to its project folder.
+- Labels each server as frontend or backend, with its framework: Next.js, Vite, Nuxt, Angular, Astro, SvelteKit, Gatsby, Vue, React, CRA, NestJS, Express, Fastify, Koa, Hapi, Hono, AdonisJS, Django, Laravel, Rails, Go, Rust and .NET.
+- Frontends open in an embedded preview. For backends, Mina lists the documentation and health endpoints that answer (`/docs`, `/swagger`, `/health`, `/graphql`…).
+- Editor tooling and system services are hidden unless *Show everything* is on.
+
+### Running projects
+- Add a project folder, or a parent folder with several projects inside.
+- Start, stop, groups and logs work for Node.js (npm, pnpm, yarn, bun), Django (using the project's virtualenv), Laravel, Rails, Go, Rust and .NET.
+- Asks before installing missing dependencies (`npm install`, `composer install`).
+- Stop ends the whole process tree, so no orphaned server keeps a port.
+- Duplicate starts are refused, and a stop pressed during startup cancels the launch.
+- Live logs with errors highlighted, kept under `~/.mina/logs/`.
+- Groups, automatic by parent folder or named by you. *Start group* starts backends first and frontends once the backends are listening.
+- Warns when a project's usual port is taken by something else.
+- Servers Mina started are still recognised after Mina restarts.
+- Opens a project or a group in VS Code, Cursor, Windsurf, Zed, Sublime Text, JetBrains IDEs and others.
+
+### Command line
+- `mina`, `--port` / `--port=` / `MINA_PORT`, `--no-open`, `--version`, `--help`.
+- `install-startup` and `uninstall-startup` on Windows, macOS and Linux.
+
+### Security
+- Listens on `127.0.0.1` only, with a per-session token, Origin and Host checks against DNS rebinding, JSON-only POST, and anti-framing headers.
+- Only stops processes from its latest scan, or launchers it verified as its own by PID and start time, so a recycled PID is never killed.
+- The command for a project is derived from its folder at start time, never read from the config, and checked against a strict character allow-list before it reaches the shell.
+- Malformed requests are answered with an error and can't take the server down.
+
+### Quality
+- Automated test suite (`npm test`, built on `node:test`, no dependencies) that starts and stops real servers.
+- CI on Windows, macOS and Linux with Node 18, 20, 22 and 24, against Python, PHP, Ruby, Go, Rust, .NET, Deno and Bun, and with npm, pnpm, yarn and bun.
 
 [Unreleased]: https://github.com/youssef-hataba/Mina/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/youssef-hataba/Mina/releases/tag/v0.1.0

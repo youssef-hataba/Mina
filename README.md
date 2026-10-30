@@ -56,7 +56,7 @@ You end up with a dozen terminal tabs, ports you can't account for, a `node` pro
 |---|---|
 | 🔍 **Zero configuration** | Run `mina`. Servers you already started from any terminal show up right away, with no setup files and no wrappers. |
 | ⚡ **One click for the whole stack** | *Start group* starts your backends first and starts the frontends once the APIs are listening. |
-| 🪶 **Very small** | No runtime dependencies at all, only Node.js built-ins. About 1,800 lines of readable code. |
+| 🪶 **Very small** | No runtime dependencies at all, only Node.js built-ins. About 2,300 lines of readable code. |
 | 🔒 **Secure by default** | It binds to localhost only, needs a per-session secret token, and checks Origin and Host. Websites you visit can't control it. |
 | 🏠 **Your data stays on your machine** | No telemetry, no accounts, no cloud. Everything lives in `~/.mina/`. |
 | 🖥️ **Cross-platform** | Windows, macOS and Linux, each using the native tools of the OS. |
@@ -225,7 +225,7 @@ Mina has **no telemetry** and makes **no network requests** except to your own l
 | Start a whole stack in order | ❌ | ⚠️ | ❌ | ✅ |
 | Built for development | ✅ | ❌ (production) | ⚠️ | ✅ |
 
-Mina does **not** replace your terminal. It runs `npm run dev` for you, just as you would.
+Mina does **not** replace your terminal. It runs `npm run dev`, `php artisan serve` or `go run .` for you, just as you would.
 
 ## ❓ FAQ
 

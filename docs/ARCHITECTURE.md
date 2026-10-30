@@ -46,7 +46,7 @@ mina/
   1. `platform.listListeners()` returns `{ port, pid, name, cmd, cwd?, chain? }`.
   2. Filter out Mina's own port, ports below 1024, system processes and (unless `?all=1`) anything that isn't a dev runtime or that lives in editor tooling folders.
   3. `probe()` sends an HTTP GET to each port on IPv4 first and falls back to IPv6, reading the status, content type and `<title>`.
-  4. `findProject()` walks up from paths in the command line (or the process's working directory) to the nearest `package.json`.
+  4. `findProject()` walks up from paths in the command line (or the process's working directory) to the nearest project file (`package.json`, `manage.py`, `artisan`, `bin/rails`, `go.mod`, `Cargo.toml`, `*.csproj`; see `runners.identify`).
   5. `classify()` decides frontend or backend and the framework from the dependencies. Backend dependencies win, because an API may list `react` for emails. If nothing matches, the `text/html` content type decides.
   6. Backends are probed on `DOC_PATHS` to list working documentation and health endpoints.
 - **Group orchestration** (`runGroup`): starts the backends in one wave, waits up to 90 s until they are listening (or have exited), then starts the frontends.
@@ -59,7 +59,7 @@ mina/
 - `scan(dir)` looks one level down. Child projects win over the parent folder, because a workspace root's `dev` script usually just runs the children.
 - `start()` validates the script name and package manager against an allow-list, then calls `platform.launch()` with a clean environment (`BROWSER=none`, `FORCE_COLOR=0`, no `ELECTRON_RUN_AS_NODE`).
 - `stop()` kills every PID listening in the project's folder, plus the launcher PID recorded in the `.pid` file. If the launch is still in flight, it cancels it instead.
-- **Launcher ownership.** The `.pid` file holds `<pid> <startTime>`. After a crash or a reboot the OS can hand the same PID to an unrelated process, so a PID only counts as Mina's while that process's start time still matches (`platform.startTimes`). `refreshOwnership()` checks this before API requests (at most once every 1.5 s), and `stop()` checks again right before killing. A PID that doesn't match is never adopted, killed or used to attribute listeners.
+- **Launcher ownership.** The `.pid` file holds `<pid> <startTime>`. After a crash or a reboot the OS can hand the same PID to an unrelated process, so a PID only counts as Mina's while that process's start time still matches (`platform.startTimes`). `refreshOwnership()` checks this before API requests (at most once every 1.5 s), and `stop()` checks again right before killing. A PID that doesn't match is never adopted, killed or used to attribute listeners. A listener counts as Mina's when the launcher is the listener itself or one of its ancestors: `sh` and `cargo run` exec into the server and keep the launcher's PID.
 - **One start at a time.** `claim(id)` reserves a project from the moment a start is requested. A second click gets `alreadyStarting`, and a stop at any point marks the claim cancelled, so the launch is skipped, or killed as soon as it has a PID.
 - `withStatus()` works out each project's state:
 
