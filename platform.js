@@ -85,14 +85,17 @@ function exeOf(pid, comm) {
 async function listListenersPosix() {
   const byKey = new Map(); // "port pid" -> { port, pid, addrs }
   let pid = 0;
-  for (const line of (await output('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pn'])).split('\n')) {
+  let family = '';
+  for (const line of (await output('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'ptn'])).split('\n')) {
     if (line[0] === 'p') pid = Number(line.slice(1));
+    if (line[0] === 't') family = line.slice(1); // "IPv4" or "IPv6", given before each file's name
     // "n127.0.0.1:3000", "n*:3000", "n[::1]:3000"
     const m = line[0] === 'n' && line.match(/^n(.*):(\d+)$/);
     if (!m || !pid) continue;
     const key = `${m[2]} ${pid}`;
     if (!byKey.has(key)) byKey.set(key, { port: Number(m[2]), pid, addrs: [] });
-    const addr = m[1].replace(/^\[|\]$/g, '');
+    // lsof writes "*" for the wildcard of both families; its type says which one it is.
+    const addr = m[1] === '*' ? (family === 'IPv6' ? '::' : '0.0.0.0') : m[1].replace(/^\[|\]$/g, '');
     if (!byKey.get(key).addrs.includes(addr)) byKey.get(key).addrs.push(addr);
   }
   const [comm, command] = await Promise.all([psTable('comm'), psTable('command')]);

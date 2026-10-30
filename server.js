@@ -10,6 +10,8 @@ const platform = require('./platform');
 
 const portArg = process.argv.indexOf('--port');
 const PORT = Number(portArg > -1 ? process.argv[portArg + 1] : process.env.MINA_PORT) || 4747;
+// Sent with every probe, so a "GET /health" in a server's log can be traced back to the dashboard that asked.
+const USER_AGENT = `Mina/${require('./package.json').version} (localhost:${PORT})`;
 // New secret every start; only the dashboard page itself ever sees it.
 const TOKEN = crypto.randomBytes(24).toString('hex');
 const ALLOWED_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
@@ -109,7 +111,7 @@ function probeHost(host, port, urlPath, timeout) {
       resolve(answer);
     };
     const timer = setTimeout(finish, timeout);
-    const req = http.get({ host, port, path: urlPath }, (res) => {
+    const req = http.get({ host, port, path: urlPath, headers: { 'User-Agent': USER_AGENT } }, (res) => {
       let body = '';
       const settle = () => {
         const m = body.match(/<title[^>]*>([^<]*)<\/title>/i);

@@ -186,9 +186,11 @@ describe('no duplicates, real cancellation', () => {
 function serverScript(o) {
   return `
     const http = require('http');
+    // Requests counted per User-Agent: several Minas (one per test file) may probe the same server.
     const seen = {};
     const s = http.createServer((q, r) => {
-      seen[q.url] = (seen[q.url] || 0) + 1;
+      const by = (seen[q.headers['user-agent'] || ''] ||= {});
+      by[q.url] = (by[q.url] || 0) + 1;
       if (q.url === '/__seen') { r.writeHead(200, { 'Content-Type': 'application/json' }); return r.end(JSON.stringify(seen)); }
       r.writeHead(200, { 'Content-Type': 'text/html' }); r.end('<title>${o.title}</title>');
     });
@@ -254,7 +256,10 @@ describe('probes stay out of the user\'s logs', () => {
     children.push(h.runExternal(app));
     await h.waitFor(() => h.portOpen(port), { what: 'backend' });
     for (let i = 0; i < 3; i++) await mina.apps(true);
-    const seen = JSON.parse((await h.request(port, { path: '/__seen' })).text);
+    const agent = `Mina/${require('../../package.json').version} (localhost:${mina.port})`;
+    const all = JSON.parse((await h.request(port, { path: '/__seen' })).text);
+    assert.ok(all[agent], `no probe carried "${agent}"; agents seen: ${Object.keys(all).join(' | ')}`);
+    const seen = all[agent];
     assert.equal(seen['/docs'], 1, `GET /docs ${seen['/docs']} times`);
     assert.ok((seen['/'] || 0) <= 1, `GET / ${seen['/']} times in 3 refreshes`);
   });
